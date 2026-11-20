@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Brain, Plus, Lock, Unlock, Eye, EyeOff, Trash2, FileText,
-  Sparkles, Copy, Check, LogOut, Upload, Terminal, Link2, ArrowUp, ArrowDown
+  Sparkles, Copy, Check, LogOut, Upload, Terminal, Link2, ArrowUp, ArrowDown,
+  ChevronDown, RotateCcw, AlertTriangle
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { CATEGORIES, INITIAL_DEMO_WORKSPACES, INITIAL_DEMO_BLOCKS } from './lib/defaultTemplates';
@@ -82,6 +83,30 @@ export default function App() {
     if (selectedBlockId === id) setSelectedBlockId(null);
   };
 
+  const handleRequestRemoval = (id) => {
+    updateBlock(id, { removal_requested: true, is_active: false });
+    setClientEditing(false);
+  };
+
+  const handleRestoreBlock = (id) => {
+    updateBlock(id, { removal_requested: false, is_active: true });
+  };
+
+  const handleAddWorkspace = () => {
+    const name = window.prompt('Nome do novo Agente / Cliente:');
+    if (!name || !name.trim()) return;
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const newWs = {
+      id: `ws-${Date.now()}`,
+      name: name.trim(),
+      slug: slug || `agente-${Date.now()}`,
+      embed_token: `tok-${Math.random().toString(36).slice(2, 10)}`,
+    };
+    setWorkspaces((prev) => [...prev, newWs]);
+    setActiveWorkspaceId(newWs.id);
+    setSelectedBlockId(null);
+  };
+
   const handleMoveBlock = (id, direction) => {
     const sorted = [...filteredBlocks];
     const idx = sorted.findIndex((b) => b.id === id);
@@ -159,17 +184,43 @@ export default function App() {
 
   return (
     <div className="h-screen flex bg-[#0d0d0f] text-zinc-100 overflow-hidden">
-      {/* Sidebar Esquerda (Estilo Notion/Linear) */}
-      <aside className="w-64 border-r border-zinc-800/80 bg-[#121215] flex flex-col shrink-0">
-        <div className="p-4 border-b border-zinc-800/80 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-sky-500/15 border border-sky-500/30 flex items-center justify-center text-sky-400">
-              <Brain className="w-4 h-4" />
+      {/* Sidebar Esquerda (Estilo Twenty CRM) */}
+      <aside className="w-60 border-r border-zinc-800/70 bg-[#141416] flex flex-col shrink-0">
+        <div className="p-3 border-b border-zinc-800/70">
+          <div className="flex items-center justify-between gap-2 px-1.5 py-1">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-6 h-6 rounded-md bg-sky-500/20 border border-sky-500/30 flex items-center justify-center text-sky-400 shrink-0">
+                <Brain className="w-3.5 h-3.5" />
+              </div>
+              <span className="text-xs font-bold text-white truncate">Cognição-IA</span>
             </div>
-            <div>
-              <div className="text-sm font-bold text-white leading-none">Cognição-IA</div>
-              <div className="text-[11px] text-zinc-500 mt-0.5">{activeWorkspace.name}</div>
-            </div>
+            {!isClientView && (
+              <button
+                onClick={handleAddWorkspace}
+                title="Novo Agente / Cliente"
+                className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <div className="mt-2 relative">
+            <select
+              value={activeWorkspaceId}
+              onChange={(e) => {
+                setActiveWorkspaceId(e.target.value);
+                setSelectedBlockId(null);
+              }}
+              className="w-full appearance-none rounded-lg border border-zinc-800 bg-zinc-900/90 px-2.5 py-1.5 pr-7 text-xs font-medium text-zinc-200 focus:border-sky-500 focus:outline-none cursor-pointer"
+            >
+              {workspaces.map((ws) => (
+                <option key={ws.id} value={ws.id}>
+                  {ws.name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 text-zinc-500 absolute right-2 top-2 pointer-events-none" />
           </div>
         </div>
 
@@ -307,6 +358,11 @@ export default function App() {
                   </div>
                 </div>
                 <div className="text-sm font-medium text-zinc-100 truncate">{block.title}</div>
+                {block.removal_requested && (
+                  <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-rose-400">
+                    <AlertTriangle className="w-3 h-3" /> Remoção solicitada (Oculto p/ IA)
+                  </div>
+                )}
               </div>
             );
           })}
@@ -393,13 +449,34 @@ export default function App() {
                   </>
                 )}
 
-                {(!isClientView || selectedBlock.client_can_delete) && (
-                  <button
-                    onClick={() => handleDeleteBlock(selectedBlock.id)}
-                    className="p-1.5 rounded-lg border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 cursor-pointer"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                {!isClientView ? (
+                  <div className="flex items-center gap-1.5">
+                    {selectedBlock.removal_requested && (
+                      <button
+                        onClick={() => handleRestoreBlock(selectedBlock.id)}
+                        title="Restaurar bloco para a IA"
+                        className="flex items-center gap-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 cursor-pointer"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" /> Restaurar
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDeleteBlock(selectedBlock.id)}
+                      title="Apagar definitivamente"
+                      className="p-1.5 rounded-lg border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  !selectedBlock.removal_requested && (
+                    <button
+                      onClick={() => handleRequestRemoval(selectedBlock.id)}
+                      className="flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-xs font-medium text-rose-300 hover:bg-rose-500/20 cursor-pointer"
+                    >
+                      <AlertTriangle className="w-3.5 h-3.5" /> Solicitar remoção
+                    </button>
+                  )
                 )}
               </div>
             )}
