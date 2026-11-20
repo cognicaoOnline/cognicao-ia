@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Brain, Plus, Lock, Unlock, Eye, EyeOff, Trash2, FileText,
-  Sparkles, Copy, Check, LogOut, Upload, Terminal, Link2
+  Sparkles, Copy, Check, LogOut, Upload, Terminal, Link2, ArrowUp, ArrowDown
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { CATEGORIES, INITIAL_DEMO_WORKSPACES, INITIAL_DEMO_BLOCKS } from './lib/defaultTemplates';
@@ -79,6 +79,22 @@ export default function App() {
   const handleDeleteBlock = (id) => {
     setBlocks((prev) => prev.filter((b) => b.id !== id));
     if (selectedBlockId === id) setSelectedBlockId(null);
+  };
+
+  const handleMoveBlock = (id, direction) => {
+    const sorted = [...filteredBlocks];
+    const idx = sorted.findIndex((b) => b.id === id);
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (idx < 0 || targetIdx < 0 || targetIdx >= sorted.length) return;
+    const current = sorted[idx];
+    const target = sorted[targetIdx];
+    setBlocks((prev) =>
+      prev.map((b) => {
+        if (b.id === current.id) return { ...b, sort_order: target.sort_order };
+        if (b.id === target.id) return { ...b, sort_order: current.sort_order };
+        return b;
+      })
+    );
   };
 
   // Envolve o texto selecionado no textarea com [[OCULTO]]...[[/OCULTO]]
@@ -265,9 +281,29 @@ export default function App() {
                   <span className={`text-[10px] font-semibold uppercase ${cat?.color || 'text-zinc-400'}`}>
                     #{block.sort_order} • {cat?.label}
                   </span>
-                  {block.is_locked_for_client && (
-                    <Lock className="w-3 h-3 text-amber-400 shrink-0" />
-                  )}
+                  <div className="flex items-center gap-1">
+                    {!isClientView && (
+                      <>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleMoveBlock(block.id, 'up'); }}
+                          title="Subir ordem"
+                          className="p-0.5 text-zinc-500 hover:text-white cursor-pointer"
+                        >
+                          <ArrowUp className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleMoveBlock(block.id, 'down'); }}
+                          title="Descer ordem"
+                          className="p-0.5 text-zinc-500 hover:text-white cursor-pointer"
+                        >
+                          <ArrowDown className="w-3 h-3" />
+                        </button>
+                      </>
+                    )}
+                    {block.is_locked_for_client && (
+                      <Lock className="w-3 h-3 text-amber-400 shrink-0" />
+                    )}
+                  </div>
                 </div>
                 <div className="text-sm font-medium text-zinc-100 truncate">{block.title}</div>
               </div>
@@ -286,28 +322,30 @@ export default function App() {
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() =>
-                copyText(
-                  `${window.location.origin}/?embed=${activeWorkspace.embed_token}`,
-                  setCopiedEmbed
-                )
-              }
-              className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 cursor-pointer"
-            >
-              {copiedEmbed ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Link2 className="w-3.5 h-3.5" />}
-              {copiedEmbed ? 'Link Embed Copiado!' : 'Link Embed (Odoo/Chatwoot)'}
-            </button>
+          {!isClientView && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() =>
+                  copyText(
+                    `${window.location.origin}/?embed=${activeWorkspace.embed_token}`,
+                    setCopiedEmbed
+                  )
+                }
+                className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 cursor-pointer"
+              >
+                {copiedEmbed ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Link2 className="w-3.5 h-3.5" />}
+                {copiedEmbed ? 'Link Copiado!' : 'Link de Integração'}
+              </button>
 
-            <button
-              onClick={() => setShowPromptModal(true)}
-              className="flex items-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-3 py-1.5 text-xs font-semibold cursor-pointer"
-            >
-              <Terminal className="w-3.5 h-3.5" />
-              Testar Prompt Montado (n8n)
-            </button>
-          </div>
+              <button
+                onClick={() => setShowPromptModal(true)}
+                className="flex items-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-3 py-1.5 text-xs font-semibold cursor-pointer"
+              >
+                <Terminal className="w-3.5 h-3.5" />
+                Testar Prompt Unificado
+              </button>
+            </div>
+          )}
         </header>
 
         {selectedBlock ? (
