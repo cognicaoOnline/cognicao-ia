@@ -6,6 +6,7 @@ import {
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { CATEGORIES, INITIAL_DEMO_WORKSPACES, INITIAL_DEMO_BLOCKS } from './lib/defaultTemplates';
 import { ColoredMarkdown } from './components/ColoredMarkdown';
+import { LivePromptEditor } from './components/LivePromptEditor';
 import { AuthScreen } from './components/AuthScreen';
 
 export default function App() {
@@ -364,28 +365,29 @@ export default function App() {
               </div>
             )}
 
-            {/* Grid Editor + Preview Colorido */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              {(!isClientView || (selectedBlock.client_can_edit && !selectedBlock.is_locked_for_client)) && (
-                <div className="flex flex-col">
-                  <div className="text-xs font-medium text-zinc-400 mb-2 flex items-center justify-between">
-                    <span>Editor Markdown</span>
-                    <span className="text-[11px] text-zinc-500">Use [[OCULTO]]...[[/OCULTO]] para borrar trechos</span>
-                  </div>
-                  <textarea
-                    ref={textareaRef}
-                    value={selectedBlock.content_md}
-                    onChange={(e) => updateBlock(selectedBlock.id, { content_md: e.target.value })}
-                    rows={16}
-                    className="w-full rounded-xl border border-zinc-800 bg-[#141417] p-4 text-sm font-mono text-zinc-200 focus:border-sky-500 focus:outline-none resize-y"
-                  />
+            {/* Editor Único Colorido ao Vivo (ou Visão Protegida do Cliente) */}
+            {!isClientView || (selectedBlock.client_can_edit && !selectedBlock.is_locked_for_client) ? (
+              <div className="flex flex-col">
+                <div className="text-xs font-medium text-zinc-400 mb-2 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+                    Editor Colorido ao Vivo (Markdown)
+                  </span>
+                  <span className="text-[11px] text-zinc-500">
+                    # Azul • - / 1. Verde • "Falas" Laranja • [[OCULTO]] Borrado p/ cliente
+                  </span>
                 </div>
-              )}
-
-              <div className={isClientView && selectedBlock.is_locked_for_client ? 'lg:col-span-2' : ''}>
+                <LivePromptEditor
+                  textareaRef={textareaRef}
+                  value={selectedBlock.content_md}
+                  onChange={(val) => updateBlock(selectedBlock.id, { content_md: val })}
+                />
+              </div>
+            ) : (
+              <div>
                 <div className="text-xs font-medium text-zinc-400 mb-2 flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-sky-400" />
-                  Visualização Colorida {isClientView ? '(Modo Cliente)' : '(Modo Admin)'}
+                  Visualização (Modo Cliente)
                 </div>
                 <div className="rounded-xl border border-zinc-800 bg-[#141417] p-5 min-h-[340px]">
                   <ColoredMarkdown
@@ -395,7 +397,7 @@ export default function App() {
                   />
                 </div>
               </div>
-            </div>
+            )}
           </div>
         ) : (
           <div className="flex-1 flex items-center justify-center text-sm text-zinc-500">
