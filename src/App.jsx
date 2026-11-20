@@ -22,6 +22,7 @@ export default function App() {
   const [selectedBlockId, setSelectedBlockId] = useState(INITIAL_DEMO_BLOCKS[0].id);
 
   const [showPromptModal, setShowPromptModal] = useState(false);
+  const [clientEditing, setClientEditing] = useState(false);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [copiedEmbed, setCopiedEmbed] = useState(false);
   const textareaRef = useRef(null);
@@ -403,29 +404,60 @@ export default function App() {
               </div>
             )}
 
-            {/* Editor Único Colorido ao Vivo (ou Visão Protegida do Cliente) */}
-            {!isClientView || (selectedBlock.client_can_edit && !selectedBlock.is_locked_for_client) ? (
+            {/* Editor Único Colorido ao Vivo (Admin) ou Visão Protegida do Cliente */}
+            {!isClientView || (clientEditing && selectedBlock.client_can_edit && !selectedBlock.is_locked_for_client) ? (
               <div className="flex flex-col">
                 <div className="text-xs font-medium text-zinc-400 mb-2 flex items-center justify-between">
                   <span className="flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-sky-400" />
-                    Editor Colorido ao Vivo (Markdown)
+                    {isClientView ? 'Editando Informações Públicas' : 'Editor Colorido ao Vivo (Markdown)'}
                   </span>
-                  <span className="text-[11px] text-zinc-500">
-                    # Azul • - / 1. Verde • "Falas" Laranja • [[OCULTO]] Borrado p/ cliente
-                  </span>
+                  {isClientView ? (
+                    <button
+                      onClick={() => setClientEditing(false)}
+                      className="text-xs text-sky-400 hover:underline cursor-pointer"
+                    >
+                      Concluir edição
+                    </button>
+                  ) : (
+                    <span className="text-[11px] text-zinc-500">
+                      # Azul • - / 1. Verde • "Falas" Laranja • [[OCULTO]] Borrado p/ cliente
+                    </span>
+                  )}
                 </div>
                 <LivePromptEditor
                   textareaRef={textareaRef}
-                  value={selectedBlock.content_md}
-                  onChange={(val) => updateBlock(selectedBlock.id, { content_md: val })}
+                  value={
+                    isClientView
+                      ? selectedBlock.content_md.replace(/\[\[OCULTO\]\][\s\S]*?\[\[\/OCULTO\]\]/g, '').trim()
+                      : selectedBlock.content_md
+                  }
+                  onChange={(val) => {
+                    if (!isClientView) {
+                      updateBlock(selectedBlock.id, { content_md: val });
+                    } else {
+                      const secrets = selectedBlock.content_md.match(/\[\[OCULTO\]\][\s\S]*?\[\[\/OCULTO\]\]/g) || [];
+                      const merged = secrets.length ? `${val}\n\n${secrets.join('\n\n')}` : val;
+                      updateBlock(selectedBlock.id, { content_md: merged });
+                    }
+                  }}
                 />
               </div>
             ) : (
               <div>
-                <div className="text-xs font-medium text-zinc-400 mb-2 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-sky-400" />
-                  Visualização (Modo Cliente)
+                <div className="text-xs font-medium text-zinc-400 mb-2 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+                    Visualização (Modo Cliente)
+                  </span>
+                  {selectedBlock.client_can_edit && !selectedBlock.is_locked_for_client && (
+                    <button
+                      onClick={() => setClientEditing(true)}
+                      className="rounded-md bg-sky-500/15 border border-sky-500/30 px-2.5 py-1 text-xs font-medium text-sky-400 hover:bg-sky-500/25 cursor-pointer"
+                    >
+                      Editar informações
+                    </button>
+                  )}
                 </div>
                 <div className="rounded-xl border border-zinc-800 bg-[#141417] p-5 min-h-[340px]">
                   <ColoredMarkdown
