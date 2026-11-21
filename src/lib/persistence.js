@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, supabaseIsolatedAuth } from './supabase';
 import {
   INITIAL_DEMO_WORKSPACES,
   INITIAL_DEMO_BLOCKS,
@@ -396,5 +396,64 @@ export async function assignWorkspaceAccessInSupabase({
     ...res,
     linkedUser: matched || null,
     status: matched ? 'linked' : 'pending_signup',
+  };
+}
+
+export async function fetchRegisteredProfiles() {
+  const { data, error } = await supabase
+    .from('cog_profiles')
+    .select('id, email, full_name, role')
+    .order('email', { ascending: true });
+  if (error) return { profiles: [], error: error.message };
+  return { profiles: data || [], error: null };
+}
+
+export async function createClientAccountInSupabase({ fullName, email, password }) {
+  if (!supabaseIsolatedAuth) {
+    return { profile: null, needsEmailConfirm: false, error: 'Supabase não configurado.' };
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanName = (fullName || '').trim() || cleanEmail.split('@')[0];
+
+  const { data, error } = await supabaseIsolatedAuth.auth.signUp({
+    email: cleanEmail,
+    password,
+    options: {
+      data: {
+        full_name: cleanName,
+        role: 'client',
+      },
+    },
+  });
+
+  if (error) {
+    const msg = error.message || '';
+    if (msg.includes('User already registered')) {
+      return { profile: null, needsEmailConfirm: false, error: 'Este e-mail já está cadastrado no sistema.' };
+    }
+    if (msg.includes('Password should be')) {
+      return { profile: null, needsEmailConfirm: false, error: 'A senha deve ter pelo menos 6 caracteres.' };
+    }
+    return { profile: null, needsEmailConfirm: false, error: msg };
+  }
+
+  if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+    return { profile: null, needsEmailConfirm: false, error: 'Este e-mail já possui cadastro.' };
+  }
+
+  if (!data?.user) {
+    return { profile: null, needsEmailConfirm: false, error: 'Não foi possível criar o cliente.' };
+  }
+
+  return {
+    profile: {
+      id: data.user.id,
+      email: cleanEmail,
+      full_name: cleanName,
+      role: 'client',
+    },
+    needsEmailConfirm: !data.session,
+    error: null,
   };
 }

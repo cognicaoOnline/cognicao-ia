@@ -9,3 +9,15 @@ export const isSupabaseConfigured =
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey)
   : null;
+
+// Cliente isolado (não sobrescreve a sessão do Admin ao criar conta de cliente)
+export const supabaseIsolatedAuth = isSupabaseConfigured
+  ? createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+        storageKey: 'cognicao-ia-isolated-signup',
+      },
+    })
+  : null;

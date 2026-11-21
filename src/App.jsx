@@ -20,6 +20,8 @@ import {
   updateWorkspaceInSupabase,
   deleteWorkspaceInSupabase,
   assignWorkspaceAccessInSupabase,
+  createClientAccountInSupabase,
+  fetchRegisteredProfiles,
 } from './lib/persistence';
 import { ColoredMarkdown } from './components/ColoredMarkdown';
 import { LivePromptEditor } from './components/LivePromptEditor';
@@ -28,6 +30,7 @@ import { WorkspaceSidebar } from './components/WorkspaceSidebar';
 import { AdminOverview } from './components/AdminOverview';
 import {
   NewWorkspaceModal,
+  NewClientModal,
   AccessModal,
   PromptModal,
   ConfirmModal,
@@ -59,6 +62,7 @@ export default function App() {
 
   // Modais
   const [showNewWsModal, setShowNewWsModal] = useState(false);
+  const [showNewClientModal, setShowNewClientModal] = useState(false);
   const [accessTargetWs, setAccessTargetWs] = useState(null);
   const [promptTargetWs, setPromptTargetWs] = useState(null);
   const [confirmDeleteBlock, setConfirmDeleteBlock] = useState(null);
@@ -613,6 +617,64 @@ export default function App() {
     setAccessTargetWs(null);
   };
 
+  const handleCreateClientAccount = async ({ fullName, email, password, assignWorkspaceId }) => {
+    if (!isCloudMode) {
+      const localProfile = {
+        id: `cli-${Date.now()}`,
+        email: email.toLowerCase(),
+        full_name: fullName || email.split('@')[0],
+        role: 'client',
+      };
+      setRegisteredProfiles((prev) => [...prev, localProfile]);
+      if (assignWorkspaceId) {
+        setWorkspaces((prev) =>
+          prev.map((w) =>
+            w.id === assignWorkspaceId ? { ...w, owner_email: localProfile.email, owner_id: localProfile.id } : w
+          )
+        );
+      }
+      return { profile: localProfile, needsEmailConfirm: false, error: null };
+    }
+
+    const res = await createClientAccountInSupabase({ fullName, email, password });
+    if (res.error || !res.profile) {
+      return res;
+    }
+
+    const updatedProfiles = [...registeredProfiles, res.profile];
+    setRegisteredProfiles(updatedProfiles);
+
+    if (assignWorkspaceId) {
+      const linkRes = await assignWorkspaceAccessInSupabase({
+        workspaceId: assignWorkspaceId,
+        email: res.profile.email,
+        currentAdminId: session.user.id,
+        registeredProfiles: updatedProfiles,
+      });
+      if (!linkRes.error) {
+        setWorkspaces((prev) =>
+          prev.map((w) =>
+            w.id === assignWorkspaceId
+              ? {
+                  ...w,
+                  owner_email: res.profile.email,
+                  owner_id: linkRes.data?.owner_id ?? res.profile.id,
+                }
+              : w
+          )
+        );
+      }
+    }
+
+    // Sincroniza lista oficial de perfis do banco
+    const listRes = await fetchRegisteredProfiles();
+    if (!listRes.error && listRes.profiles.length > 0) {
+      setRegisteredProfiles(listRes.profiles);
+    }
+
+    return res;
+  };
+
   const assemblePromptForWorkspace = (wsId) =>
     blocks
       .filter((b) => b.workspace_id === wsId && b.is_active)
@@ -673,6 +735,7 @@ export default function App() {
         activeWorkspaceId={activeWorkspace?.id}
         onSelectWorkspace={handleSelectWorkspace}
         onOpenNewWorkspace={() => setShowNewWsModal(true)}
+        onOpenNewClient={() => setShowNewClientModal(true)}
         activeCategory={activeCategory}
         onSelectCategory={setActiveCategory}
         workspaceBlocks={workspaceBlocks}
@@ -747,6 +810,7 @@ export default function App() {
               setViewMode('editor');
             }}
             onOpenNewWorkspace={() => setShowNewWsModal(true)}
+            onOpenNewClient={() => setShowNewClientModal(true)}
             onOpenAccessModal={(ws) => setAccessTargetWs(ws)}
             onOpenPromptModal={async (ws) => {
               await flushPendingSaves();
@@ -1123,12 +1187,22 @@ export default function App() {
         />
       )}
 
+      {showNewClientModal && (
+        <NewClientModal
+          workspaces={workspaces}
+          registeredProfiles={registeredProfiles}
+          onClose={() => setShowNewClientModal(false)}
+          onCreateClient={handleCreateClientAccount}
+        />
+      )}
+
       {accessTargetWs && (
         <AccessModal
           workspace={accessTargetWs}
           registeredProfiles={registeredProfiles}
           onClose={() => setAccessTargetWs(null)}
           onSave={handleSaveAccess}
+          onCreateClient={handleCreateClientAccount}
         />
       )}
 

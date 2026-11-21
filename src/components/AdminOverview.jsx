@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Search, Plus, Lock, Terminal, Trash2, ArrowRight,
-  AlertTriangle, CheckCircle2, UserCheck, Layers, Pencil, Check, X
+  AlertTriangle, CheckCircle2, UserCheck, Layers, Pencil, Check, X, UserPlus
 } from 'lucide-react';
 
 export function AdminOverview({
@@ -9,6 +9,7 @@ export function AdminOverview({
   blocks,
   onSelectWorkspace,
   onOpenNewWorkspace,
+  onOpenNewClient,
   onOpenAccessModal,
   onOpenPromptModal,
   onRenameWorkspace,
@@ -31,12 +32,20 @@ export function AdminOverview({
         <div>
           <h1 className="text-sm font-semibold text-white">Agentes & Clientes (Visão Geral)</h1>
         </div>
-        <button
-          onClick={onOpenNewWorkspace}
-          className="flex items-center gap-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-zinc-950 px-3 py-1.5 text-xs font-semibold cursor-pointer"
-        >
-          <Plus className="w-3.5 h-3.5" /> Novo Agente
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onOpenNewClient}
+            className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 px-3 py-1.5 text-xs font-medium cursor-pointer"
+          >
+            <UserPlus className="w-3.5 h-3.5 text-sky-400" /> Novo Cliente
+          </button>
+          <button
+            onClick={onOpenNewWorkspace}
+            className="flex items-center gap-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-zinc-950 px-3 py-1.5 text-xs font-semibold cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" /> Novo Agente
+          </button>
+        </div>
       </header>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-5">

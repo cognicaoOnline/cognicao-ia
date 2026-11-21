@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Brain, Plus, Eye, EyeOff, LogOut, Upload, ChevronDown,
-  LayoutGrid, Search, AlertTriangle, Check
+  LayoutGrid, Search, AlertTriangle, Check, UserPlus
 } from 'lucide-react';
 import { CATEGORIES } from '../lib/defaultTemplates';
 
@@ -11,6 +11,7 @@ export function WorkspaceSidebar({
   activeWorkspaceId,
   onSelectWorkspace,
   onOpenNewWorkspace,
+  onOpenNewClient,
   activeCategory,
   onSelectCategory,
   workspaceBlocks,
@@ -132,30 +133,44 @@ export function WorkspaceSidebar({
           )}
         </div>
 
-        {/* Botão Visão Geral de Todos os Agentes (Admin) */}
+        {/* Botão Visão Geral de Todos os Agentes e Cadastro de Cliente (Admin) */}
         {!isClientView && (
-          <button
-            type="button"
-            onClick={() => {
-              onChangeViewMode(viewMode === 'overview' ? 'editor' : 'overview');
-              setDropdownOpen(false);
-            }}
-            className={`mt-2 w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
-              viewMode === 'overview'
-                ? 'bg-sky-500/15 border border-sky-500/30 text-sky-300'
-                : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200 border border-transparent'
-            }`}
-          >
-            <span className="flex items-center gap-2">
-              <LayoutGrid className="w-3.5 h-3.5" />
-              Todos os Agentes ({workspaces.length})
-            </span>
-            {pendingRemovalsTotal > 0 && (
-              <span className="rounded-full bg-rose-500/20 text-rose-300 px-1.5 py-0.5 text-[10px] font-semibold">
-                {pendingRemovalsTotal}
+          <div className="mt-2 space-y-1">
+            <button
+              type="button"
+              onClick={() => {
+                onChangeViewMode(viewMode === 'overview' ? 'editor' : 'overview');
+                setDropdownOpen(false);
+              }}
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
+                viewMode === 'overview'
+                  ? 'bg-sky-500/15 border border-sky-500/30 text-sky-300'
+                  : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200 border border-transparent'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <LayoutGrid className="w-3.5 h-3.5" />
+                Todos os Agentes ({workspaces.length})
               </span>
-            )}
-          </button>
+              {pendingRemovalsTotal > 0 && (
+                <span className="rounded-full bg-rose-500/20 text-rose-300 px-1.5 py-0.5 text-[10px] font-semibold">
+                  {pendingRemovalsTotal}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                onOpenNewClient();
+                setDropdownOpen(false);
+              }}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200 transition cursor-pointer"
+            >
+              <UserPlus className="w-3.5 h-3.5 text-sky-400" />
+              Cadastrar Cliente
+            </button>
+          </div>
         )}
       </div>
 
