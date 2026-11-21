@@ -93,12 +93,12 @@ returns boolean as $$
 $$ language sql security definer stable;
 
 -- 7. View pronta para o n8n consultar o prompt montado em 1 só chamada!
-create or replace view public.v_cog_n8n_prompts as
+drop view if exists public.v_cog_n8n_prompts;
+create view public.v_cog_n8n_prompts as
 select
   w.id as workspace_id,
   w.slug as workspace_slug,
   w.name as workspace_name,
-  w.embed_token,
   coalesce(
     string_agg(
       '### ' || b.title || E'\n' ||
@@ -109,7 +109,8 @@ select
       E'\n\n---\n\n' order by b.sort_order asc, b.created_at asc
     ),
     ''
-  ) as full_prompt_md
+  ) as full_prompt_md,
+  w.embed_token
 from public.cog_workspaces w
 left join public.cog_knowledge_blocks b
   on b.workspace_id = w.id and b.is_active = true
@@ -122,6 +123,11 @@ alter table public.cog_knowledge_blocks enable row level security;
 alter table public.cog_knowledge_files enable row level security;
 
 -- Limpa políticas antigas para recriar sem duplicidade
+drop policy if exists "Users can view own profile" on public.cog_profiles;
+drop policy if exists "Admins and owners view workspaces" on public.cog_workspaces;
+drop policy if exists "Admins and owners manage workspaces" on public.cog_workspaces;
+drop policy if exists "Access blocks of own workspace or admin" on public.cog_knowledge_blocks;
+drop policy if exists "Access files of own workspace or admin" on public.cog_knowledge_files;
 drop policy if exists "cog_profiles_select" on public.cog_profiles;
 drop policy if exists "cog_workspaces_select" on public.cog_workspaces;
 drop policy if exists "cog_workspaces_all" on public.cog_workspaces;
@@ -135,20 +141,8 @@ create policy "cog_profiles_select" on public.cog_profiles
   );
 
 -- Workspaces: admin vê/gerencia tudo; cliente vê/acessa onde é owner_id OU owner_email
-create policy "cog_workspaces_select" on public.cog_workspaces
-  for select using (
-    owner_id = auth.uid()
-    or (owner_email is not null and lower(owner_email) = lower(coalesce(auth.jwt()->>'email', '')))
-    or public.cog_is_admin()
-  );
-
 create policy "cog_workspaces_all" on public.cog_workspaces
   for all using (
-    owner_id = auth.uid()
-    or (owner_email is not null and lower(owner_email) = lower(coalesce(auth.jwt()->>'email', '')))
-    or public.cog_is_admin()
-  )
-  with check (
     owner_id = auth.uid()
     or (owner_email is not null and lower(owner_email) = lower(coalesce(auth.jwt()->>'email', '')))
     or public.cog_is_admin()
@@ -166,33 +160,11 @@ create policy "cog_blocks_all" on public.cog_knowledge_blocks
           or public.cog_is_admin()
         )
     )
-  )
-  with check (
-    exists (
-      select 1 from public.cog_workspaces w
-      where w.id = workspace_id
-        and (
-          w.owner_id = auth.uid()
-          or (w.owner_email is not null and lower(w.owner_email) = lower(coalesce(auth.jwt()->>'email', '')))
-          or public.cog_is_admin()
-        )
-    )
   );
 
 -- Arquivos: acesso se tiver acesso ao workspace pai ou for admin
 create policy "cog_files_all" on public.cog_knowledge_files
   for all using (
-    exists (
-      select 1 from public.cog_workspaces w
-      where w.id = workspace_id
-        and (
-          w.owner_id = auth.uid()
-          or (w.owner_email is not null and lower(w.owner_email) = lower(coalesce(auth.jwt()->>'email', '')))
-          or public.cog_is_admin()
-        )
-    )
-  )
-  with check (
     exists (
       select 1 from public.cog_workspaces w
       where w.id = workspace_id
