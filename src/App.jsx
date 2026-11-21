@@ -26,6 +26,8 @@ export default function App() {
   const [showAccessModal, setShowAccessModal] = useState(false);
   const [accessEmail, setAccessEmail] = useState('');
   const [clientEditing, setClientEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedToast, setSavedToast] = useState(false);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [copiedEmbed, setCopiedEmbed] = useState(false);
   const textareaRef = useRef(null);
@@ -42,6 +44,38 @@ export default function App() {
     });
     return () => subscription.unsubscribe();
   }, []);
+
+  // Carrega perfil, workspaces e blocos do Supabase quando logado
+  useEffect(() => {
+    if (!isSupabaseConfigured || !session?.user) return;
+    const loadData = async () => {
+      const { data: profile } = await supabase
+        .from('cog_profiles')
+        .select('role')
+        .eq('id', session.user.id)
+        .single();
+      if (profile?.role) setUserRole(profile.role);
+
+      const { data: wsData } = await supabase
+        .from('cog_workspaces')
+        .select('*')
+        .order('created_at', { ascending: true });
+      if (wsData && wsData.length > 0) {
+        setWorkspaces(wsData);
+        setActiveWorkspaceId(wsData[0].id);
+      }
+
+      const { data: blkData } = await supabase
+        .from('cog_knowledge_blocks')
+        .select('*')
+        .order('sort_order', { ascending: true });
+      if (blkData && blkData.length > 0) {
+        setBlocks(blkData);
+        setSelectedBlockId(blkData[0].id);
+      }
+    };
+    loadData();
+  }, [session]);
 
   if (isSupabaseConfigured && !session && !demoMode) {
     return <AuthScreen onDemoLogin={() => setDemoMode(true)} />;
@@ -62,10 +96,32 @@ export default function App() {
     setBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, ...patch } : b)));
   };
 
-  const handleAddBlock = () => {
-    const newId = `blk-${Date.now()}`;
+  const handleSaveBlock = async (blockToSave = selectedBlock) => {
+    if (!blockToSave) return;
+    if (!isSupabaseConfigured || demoMode) {
+      setSavedToast(true);
+      setTimeout(() => setSavedToast(false), 2000);
+      return;
+    }
+    setSaving(true);
+    await supabase
+      .from('cog_knowledge_blocks')
+      .update({
+        title: blockToSave.title,
+        content_md: blockToSave.content_md,
+        sort_order: blockToSave.sort_order,
+        is_active: blockToSave.is_active,
+        is_locked_for_client: blockToSave.is_locked_for_client,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', blockToSave.id);
+    setSaving(false);
+    setSavedToast(true);
+    setTimeout(() => setSavedToast(false), 2000);
+  };
+
+  const handleAddBlock = async () => {
     const newBlock = {
-      id: newId,
       workspace_id: activeWorkspaceId,
       category: activeCategory === 'all' ? 'knowledge' : activeCategory,
       title: 'Novo Bloco de Conhecimento',
@@ -73,39 +129,70 @@ export default function App() {
       is_active: true,
       is_locked_for_client: false,
       client_can_edit: true,
-      client_can_delete: true,
+      client_can_delete: false,
       content_md: `# Título do Bloco\nEscreva aqui as informações que a IA deve saber...`,
     };
-    setBlocks((prev) => [...prev, newBlock]);
-    setSelectedBlockId(newId);
+    if (isSupabaseConfigured && session?.user) {
+      const { data } = await supabase.from('cog_knowledge_blocks').insert(newBlock).select().single();
+      if (data) {
+        setBlocks((prev) => [...prev, data]);
+        setSelectedBlockId(data.id);
+        return;
+      }
+    }
+    const localBlock = { ...newBlock, id: `blk-${Date.now()}` };
+    setBlocks((prev) => [...prev, localBlock]);
+    setSelectedBlockId(localBlock.id);
   };
 
-  const handleDeleteBlock = (id) => {
+  const handleDeleteBlock = async (id) => {
+    if (isSupabaseConfigured && session?.user) {
+      await supabase.from('cog_knowledge_blocks').delete().eq('id', id);
+    }
     setBlocks((prev) => prev.filter((b) => b.id !== id));
     if (selectedBlockId === id) setSelectedBlockId(null);
   };
 
   const handleRequestRemoval = (id) => {
+    const updated = { ...blocks.find((b) => b.id === id), removal_requested: true, is_active: false };
     updateBlock(id, { removal_requested: true, is_active: false });
+    handleSaveBlock(updated);
     setClientEditing(false);
   };
 
-  const handleRestoreBlock = (id) => {
+  const handleCancelRemoval = (id) => {
+    const updated = { ...blocks.find((b) => b.id === id), removal_requested: false, is_active: true };
     updateBlock(id, { removal_requested: false, is_active: true });
+    handleSaveBlock(updated);
   };
 
-  const handleAddWorkspace = () => {
+  const handleRestoreBlock = (id) => {
+    const updated = { ...blocks.find((b) => b.id === id), removal_requested: false, is_active: true };
+    updateBlock(id, { removal_requested: false, is_active: true });
+    handleSaveBlock(updated);
+  };
+
+  const handleAddWorkspace = async () => {
     const name = window.prompt('Nome do novo Agente / Cliente:');
     if (!name || !name.trim()) return;
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') + '-' + Date.now().toString().slice(-4);
     const newWs = {
-      id: `ws-${Date.now()}`,
       name: name.trim(),
-      slug: slug || `agente-${Date.now()}`,
-      embed_token: `tok-${Math.random().toString(36).slice(2, 10)}`,
+      slug,
+      owner_id: session?.user?.id || null,
     };
-    setWorkspaces((prev) => [...prev, newWs]);
-    setActiveWorkspaceId(newWs.id);
+    if (isSupabaseConfigured && session?.user) {
+      const { data } = await supabase.from('cog_workspaces').insert(newWs).select().single();
+      if (data) {
+        setWorkspaces((prev) => [...prev, data]);
+        setActiveWorkspaceId(data.id);
+        setSelectedBlockId(null);
+        return;
+      }
+    }
+    const localWs = { ...newWs, id: `ws-${Date.now()}`, embed_token: `tok-${Date.now()}` };
+    setWorkspaces((prev) => [...prev, localWs]);
+    setActiveWorkspaceId(localWs.id);
     setSelectedBlockId(null);
   };
 
@@ -462,6 +549,15 @@ export default function App() {
                   </>
                 )}
 
+                <button
+                  onClick={() => handleSaveBlock()}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-zinc-950 px-3 py-1.5 text-xs font-semibold cursor-pointer disabled:opacity-50"
+                >
+                  {savedToast ? <Check className="w-3.5 h-3.5" /> : null}
+                  {saving ? 'Salvando...' : savedToast ? 'Salvo!' : 'Salvar'}
+                </button>
+
                 {!isClientView ? (
                   <div className="flex items-center gap-1.5">
                     {selectedBlock.removal_requested && (
@@ -482,12 +578,19 @@ export default function App() {
                     </button>
                   </div>
                 ) : (
-                  !selectedBlock.removal_requested && (
+                  !selectedBlock.removal_requested ? (
                     <button
                       onClick={() => handleRequestRemoval(selectedBlock.id)}
                       className="flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-xs font-medium text-rose-300 hover:bg-rose-500/20 cursor-pointer"
                     >
                       <AlertTriangle className="w-3.5 h-3.5" /> Solicitar remoção
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleCancelRemoval(selectedBlock.id)}
+                      className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" /> Cancelar remoção
                     </button>
                   )
                 )}
