@@ -1,81 +1,306 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Brain, Plus, Lock, Unlock, Eye, EyeOff, Trash2, FileText,
-  Sparkles, Copy, Check, LogOut, Upload, Terminal, Link2, ArrowUp, ArrowDown,
-  ChevronDown, RotateCcw, AlertTriangle
+  Plus, Lock, Unlock, Trash2, FileText, Sparkles, Link2, Terminal,
+  ArrowUp, ArrowDown, RotateCcw, AlertTriangle, Check, Cloud, CloudOff,
+  Loader2, RefreshCw, X
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
-import { CATEGORIES, INITIAL_DEMO_WORKSPACES, INITIAL_DEMO_BLOCKS } from './lib/defaultTemplates';
+import { CATEGORIES, buildStarterBlocks } from './lib/defaultTemplates';
+import {
+  loadDemoState,
+  saveDemoState,
+  saveBlockDraft,
+  clearBlockDraft,
+  fetchInitialData,
+  saveBlockToSupabase,
+  createBlockInSupabase,
+  deleteBlockInSupabase,
+  saveBlockOrdersInSupabase,
+  createWorkspaceInSupabase,
+  updateWorkspaceInSupabase,
+  deleteWorkspaceInSupabase,
+  assignWorkspaceAccessInSupabase,
+} from './lib/persistence';
 import { ColoredMarkdown } from './components/ColoredMarkdown';
 import { LivePromptEditor } from './components/LivePromptEditor';
 import { AuthScreen } from './components/AuthScreen';
+import { WorkspaceSidebar } from './components/WorkspaceSidebar';
+import { AdminOverview } from './components/AdminOverview';
+import {
+  NewWorkspaceModal,
+  AccessModal,
+  PromptModal,
+  ConfirmModal,
+} from './components/Modals';
 
 export default function App() {
+  const [authLoading, setAuthLoading] = useState(isSupabaseConfigured);
+  const [dataLoading, setDataLoading] = useState(false);
   const [session, setSession] = useState(null);
   const [demoMode, setDemoMode] = useState(false);
-  const [userRole, setUserRole] = useState('admin'); // 'admin' | 'client'
+
+  const [userRole, setUserRole] = useState('admin');
   const [previewAsClient, setPreviewAsClient] = useState(false);
+  const [viewMode, setViewMode] = useState('editor'); // 'editor' | 'overview'
 
-  const [workspaces, setWorkspaces] = useState(INITIAL_DEMO_WORKSPACES);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState(INITIAL_DEMO_WORKSPACES[0].id);
+  const [workspaces, setWorkspaces] = useState([]);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState(null);
   const [activeCategory, setActiveCategory] = useState('all');
-  const [blocks, setBlocks] = useState(INITIAL_DEMO_BLOCKS);
-  const [selectedBlockId, setSelectedBlockId] = useState(INITIAL_DEMO_BLOCKS[0].id);
+  const [blocks, setBlocks] = useState([]);
+  const [selectedBlockId, setSelectedBlockId] = useState(null);
+  const [registeredProfiles, setRegisteredProfiles] = useState([]);
 
-  const [showPromptModal, setShowPromptModal] = useState(false);
-  const [showAccessModal, setShowAccessModal] = useState(false);
-  const [accessEmail, setAccessEmail] = useState('');
   const [clientEditing, setClientEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [savedToast, setSavedToast] = useState(false);
-  const [copiedPrompt, setCopiedPrompt] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('idle'); // 'idle' | 'pending' | 'saving' | 'saved' | 'error'
+  const [lastSavedAt, setLastSavedAt] = useState(null);
+  const [dirtyBlockIds, setDirtyBlockIds] = useState(() => new Set());
+  const [errorBanner, setErrorBanner] = useState(null);
   const [copiedEmbed, setCopiedEmbed] = useState(false);
+
+  // Modais
+  const [showNewWsModal, setShowNewWsModal] = useState(false);
+  const [accessTargetWs, setAccessTargetWs] = useState(null);
+  const [promptTargetWs, setPromptTargetWs] = useState(null);
+  const [confirmDeleteBlock, setConfirmDeleteBlock] = useState(null);
+  const [confirmDeleteWs, setConfirmDeleteWs] = useState(null);
+
   const textareaRef = useRef(null);
+  const blocksRef = useRef(blocks);
+  blocksRef.current = blocks;
+  const dirtyIdsRef = useRef(new Set());
+  const saveTimersRef = useRef({});
 
-  const isClientView = userRole === 'client' || previewAsClient;
+  const isCloudMode = isSupabaseConfigured && Boolean(session?.user) && !demoMode;
+  const isClientView = userRole === 'client' || (userRole === 'admin' && previewAsClient);
 
+  // 1. Sessão Supabase
   useEffect(() => {
-    if (!isSupabaseConfigured) return;
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+    if (!isSupabaseConfigured) {
+      setAuthLoading(false);
+      return;
+    }
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      setSession(s);
+      setAuthLoading(false);
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s);
     });
     return () => subscription.unsubscribe();
   }, []);
 
-  // Carrega perfil, workspaces e blocos do Supabase quando logado
+  // 2. Carrega dados iniciais (Supabase OU Demo em localStorage)
   useEffect(() => {
-    if (!isSupabaseConfigured || !session?.user) return;
-    const loadData = async () => {
-      const { data: profile } = await supabase
-        .from('cog_profiles')
-        .select('role')
-        .eq('id', session.user.id)
-        .single();
-      if (profile?.role) setUserRole(profile.role);
+    if (demoMode) {
+      const demo = loadDemoState();
+      setWorkspaces(demo.workspaces);
+      setBlocks(demo.blocks);
+      const firstWsId = demo.workspaces[0]?.id || null;
+      setActiveWorkspaceId(firstWsId);
+      const firstBlk = demo.blocks.find((b) => b.workspace_id === firstWsId);
+      setSelectedBlockId(firstBlk?.id || null);
+      setUserRole('admin');
+      return;
+    }
 
-      const { data: wsData } = await supabase
-        .from('cog_workspaces')
-        .select('*')
-        .order('created_at', { ascending: true });
-      if (wsData && wsData.length > 0) {
-        setWorkspaces(wsData);
-        setActiveWorkspaceId(wsData[0].id);
+    if (!isSupabaseConfigured || !session?.user) return;
+
+    let cancelled = false;
+    const load = async () => {
+      setDataLoading(true);
+      setErrorBanner(null);
+      const res = await fetchInitialData(session.user);
+      if (cancelled) return;
+
+      if (res.error) {
+        setErrorBanner(res.error);
+        setDataLoading(false);
+        return;
       }
 
-      const { data: blkData } = await supabase
-        .from('cog_knowledge_blocks')
-        .select('*')
-        .order('sort_order', { ascending: true });
-      if (blkData && blkData.length > 0) {
-        setBlocks(blkData);
-        setSelectedBlockId(blkData[0].id);
+      setUserRole(res.role);
+      setWorkspaces(res.workspaces);
+      setBlocks(res.blocks);
+      setRegisteredProfiles(res.registeredProfiles || []);
+
+      const savedWsKey = `cognicao_ia_last_ws_${session.user.id}`;
+      const preferredWsId = localStorage.getItem(savedWsKey);
+      const validWs =
+        res.workspaces.find((w) => w.id === preferredWsId) || res.workspaces[0] || null;
+      const wsId = validWs?.id || null;
+      setActiveWorkspaceId(wsId);
+
+      const firstBlk = res.blocks.find((b) => b.workspace_id === wsId);
+      setSelectedBlockId(firstBlk?.id || null);
+      setDataLoading(false);
+
+      // Se havia rascunhos locais recuperados pós-F5, sincroniza com a nuvem imediatamente
+      if (res.recoveredIds && res.recoveredIds.length > 0) {
+        const nextDirty = new Set(res.recoveredIds);
+        dirtyIdsRef.current = nextDirty;
+        setDirtyBlockIds(nextDirty);
+        setSaveStatus('saving');
+        for (const blkId of res.recoveredIds) {
+          const blk = res.blocks.find((b) => b.id === blkId);
+          if (blk) {
+            const saved = await saveBlockToSupabase(blk);
+            if (saved.error) {
+              setErrorBanner(`Erro ao sincronizar rascunho: ${saved.error}`);
+              setSaveStatus('error');
+            }
+          }
+        }
+        dirtyIdsRef.current = new Set();
+        setDirtyBlockIds(new Set());
+        setSaveStatus('saved');
+        setLastSavedAt(new Date());
       }
     };
-    loadData();
-  }, [session]);
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [session, demoMode]);
+
+  // Persiste Demo Mode automaticamente no localStorage
+  useEffect(() => {
+    if (demoMode && workspaces.length > 0) {
+      saveDemoState(workspaces, blocks);
+    }
+  }, [demoMode, workspaces, blocks]);
+
+  // Lembra último workspace selecionado
+  useEffect(() => {
+    if (isCloudMode && activeWorkspaceId && session?.user?.id) {
+      localStorage.setItem(`cognicao_ia_last_ws_${session.user.id}`, activeWorkspaceId);
+    }
+  }, [isCloudMode, activeWorkspaceId, session?.user?.id]);
+
+  // Função central de persistência de 1 bloco no Supabase
+  const persistBlock = useCallback(
+    async (blockId, explicitBlock = null) => {
+      const target = explicitBlock || blocksRef.current.find((b) => b.id === blockId);
+      if (!target) return true;
+
+      if (!isCloudMode) {
+        clearBlockDraft(blockId);
+        dirtyIdsRef.current.delete(blockId);
+        setDirtyBlockIds(new Set(dirtyIdsRef.current));
+        setSaveStatus('saved');
+        setLastSavedAt(new Date());
+        return true;
+      }
+
+      setSaveStatus('saving');
+      const { data, error } = await saveBlockToSupabase(target);
+      if (error) {
+        setSaveStatus('error');
+        setErrorBanner(`Não foi possível salvar "${target.title}": ${error}`);
+        return false;
+      }
+
+      if (data) {
+        setBlocks((prev) =>
+          prev.map((b) => (b.id === data.id ? { ...b, ...data } : b))
+        );
+      }
+
+      dirtyIdsRef.current.delete(blockId);
+      setDirtyBlockIds(new Set(dirtyIdsRef.current));
+      setSaveStatus('saved');
+      setLastSavedAt(new Date());
+      return true;
+    },
+    [isCloudMode]
+  );
+
+  // Salva imediatamente todas as alterações pendentes
+  const flushPendingSaves = useCallback(async () => {
+    Object.values(saveTimersRef.current).forEach((t) => clearTimeout(t));
+    saveTimersRef.current = {};
+
+    const pendingIds = Array.from(dirtyIdsRef.current);
+    if (pendingIds.length === 0) return true;
+
+    let allOk = true;
+    for (const id of pendingIds) {
+      const ok = await persistBlock(id);
+      if (!ok) allOk = false;
+    }
+    return allOk;
+  }, [persistBlock]);
+
+  // Aviso ao fechar aba apenas se houver pendência não salva
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (dirtyBlockIds.size > 0 && isCloudMode) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [dirtyBlockIds, isCloudMode]);
+
+  // Atalho Ctrl+S / Cmd+S para salvar na hora
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        flushPendingSaves();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [flushPendingSaves]);
+
+  // Atualização com Auto-Save (debounce 900ms) + backup instantâneo em localStorage
+  const updateBlockWithAutoSave = (id, patch, immediate = false) => {
+    let updatedSnapshot = null;
+    setBlocks((prev) =>
+      prev.map((b) => {
+        if (b.id !== id) return b;
+        updatedSnapshot = { ...b, ...patch };
+        return updatedSnapshot;
+      })
+    );
+
+    if (updatedSnapshot) {
+      saveBlockDraft(id, {
+        title: updatedSnapshot.title,
+        content_md: updatedSnapshot.content_md,
+        category: updatedSnapshot.category,
+      });
+    }
+
+    dirtyIdsRef.current.add(id);
+    setDirtyBlockIds(new Set(dirtyIdsRef.current));
+    setSaveStatus(immediate ? 'saving' : 'pending');
+
+    if (saveTimersRef.current[id]) {
+      clearTimeout(saveTimersRef.current[id]);
+    }
+
+    if (immediate) {
+      persistBlock(id, updatedSnapshot);
+    } else {
+      saveTimersRef.current[id] = setTimeout(() => {
+        delete saveTimersRef.current[id];
+        persistBlock(id);
+      }, 900);
+    }
+  };
+
+  // Estados de carregamento / login
+  if (authLoading || dataLoading) {
+    return (
+      <div className="min-h-screen bg-[#0d0d0f] flex flex-col items-center justify-center gap-3 text-zinc-400">
+        <Loader2 className="w-6 h-6 animate-spin text-sky-400" />
+        <p className="text-xs">Carregando seus agentes e blocos...</p>
+      </div>
+    );
+  }
 
   if (isSupabaseConfigured && !session && !demoMode) {
     return <AuthScreen onDemoLogin={() => setDemoMode(true)} />;
@@ -84,135 +309,133 @@ export default function App() {
     return <AuthScreen onDemoLogin={() => setDemoMode(true)} />;
   }
 
-  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) || workspaces[0];
-  const filteredBlocks = blocks
-    .filter((b) => b.workspace_id === activeWorkspaceId)
-    .filter((b) => activeCategory === 'all' || b.category === activeCategory)
+  const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) || workspaces[0] || null;
+  const workspaceBlocks = blocks
+    .filter((b) => activeWorkspace && b.workspace_id === activeWorkspace.id)
     .sort((a, b) => a.sort_order - b.sort_order);
 
-  const selectedBlock = blocks.find((b) => b.id === selectedBlockId) || filteredBlocks[0];
+  const filteredBlocks = workspaceBlocks.filter(
+    (b) => activeCategory === 'all' || b.category === activeCategory
+  );
 
-  const updateBlock = (id, patch) => {
-    setBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, ...patch } : b)));
+  const selectedBlock =
+    workspaceBlocks.find((b) => b.id === selectedBlockId) || filteredBlocks[0] || null;
+
+  const handleSelectWorkspace = async (wsId) => {
+    await flushPendingSaves();
+    setActiveWorkspaceId(wsId);
+    setClientEditing(false);
+    const first = blocksRef.current
+      .filter((b) => b.workspace_id === wsId)
+      .sort((a, b) => a.sort_order - b.sort_order)[0];
+    setSelectedBlockId(first?.id || null);
   };
 
-  const handleSaveBlock = async (blockToSave = selectedBlock) => {
-    if (!blockToSave) return;
-    if (!isSupabaseConfigured || demoMode) {
-      setSavedToast(true);
-      setTimeout(() => setSavedToast(false), 2000);
-      return;
-    }
-    setSaving(true);
-    await supabase
-      .from('cog_knowledge_blocks')
-      .update({
-        title: blockToSave.title,
-        content_md: blockToSave.content_md,
-        sort_order: blockToSave.sort_order,
-        is_active: blockToSave.is_active,
-        is_locked_for_client: blockToSave.is_locked_for_client,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', blockToSave.id);
-    setSaving(false);
-    setSavedToast(true);
-    setTimeout(() => setSavedToast(false), 2000);
+  const handleSelectBlock = async (blkId) => {
+    if (blkId === selectedBlockId) return;
+    await flushPendingSaves();
+    setClientEditing(false);
+    setSelectedBlockId(blkId);
   };
 
   const handleAddBlock = async () => {
-    const newBlock = {
-      workspace_id: activeWorkspaceId,
+    if (!activeWorkspace) return;
+    await flushPendingSaves();
+
+    const maxOrder = workspaceBlocks.reduce((acc, b) => Math.max(acc, b.sort_order || 0), 0);
+    const newBlockPayload = {
+      workspace_id: activeWorkspace.id,
       category: activeCategory === 'all' ? 'knowledge' : activeCategory,
       title: 'Novo Bloco de Conhecimento',
-      sort_order: filteredBlocks.length + 1,
+      sort_order: maxOrder + 1,
       is_active: true,
       is_locked_for_client: false,
       client_can_edit: true,
       client_can_delete: false,
+      removal_requested: false,
       content_md: `# Título do Bloco\nEscreva aqui as informações que a IA deve saber...`,
     };
-    if (isSupabaseConfigured && session?.user) {
-      const { data } = await supabase.from('cog_knowledge_blocks').insert(newBlock).select().single();
-      if (data) {
-        setBlocks((prev) => [...prev, data]);
-        setSelectedBlockId(data.id);
+
+    if (isCloudMode) {
+      const { data, error } = await createBlockInSupabase(newBlockPayload);
+      if (error || !data) {
+        setErrorBanner(`Erro ao criar bloco: ${error}`);
         return;
       }
+      setBlocks((prev) => [...prev, data]);
+      setSelectedBlockId(data.id);
+      setClientEditing(isClientView);
+      return;
     }
-    const localBlock = { ...newBlock, id: `blk-${Date.now()}` };
+
+    const localBlock = { ...newBlockPayload, id: `blk-${Date.now()}` };
     setBlocks((prev) => [...prev, localBlock]);
     setSelectedBlockId(localBlock.id);
+    setClientEditing(isClientView);
   };
 
-  const handleDeleteBlock = async (id) => {
-    if (isSupabaseConfigured && session?.user) {
-      await supabase.from('cog_knowledge_blocks').delete().eq('id', id);
+  const handleDeleteBlockConfirmed = async () => {
+    const blk = confirmDeleteBlock;
+    if (!blk) return;
+    setConfirmDeleteBlock(null);
+
+    if (saveTimersRef.current[blk.id]) {
+      clearTimeout(saveTimersRef.current[blk.id]);
+      delete saveTimersRef.current[blk.id];
     }
-    setBlocks((prev) => prev.filter((b) => b.id !== id));
-    if (selectedBlockId === id) setSelectedBlockId(null);
-  };
 
-  const handleRequestRemoval = (id) => {
-    const updated = { ...blocks.find((b) => b.id === id), removal_requested: true, is_active: false };
-    updateBlock(id, { removal_requested: true, is_active: false });
-    handleSaveBlock(updated);
-    setClientEditing(false);
-  };
-
-  const handleCancelRemoval = (id) => {
-    const updated = { ...blocks.find((b) => b.id === id), removal_requested: false, is_active: true };
-    updateBlock(id, { removal_requested: false, is_active: true });
-    handleSaveBlock(updated);
-  };
-
-  const handleRestoreBlock = (id) => {
-    const updated = { ...blocks.find((b) => b.id === id), removal_requested: false, is_active: true };
-    updateBlock(id, { removal_requested: false, is_active: true });
-    handleSaveBlock(updated);
-  };
-
-  const handleAddWorkspace = async () => {
-    const name = window.prompt('Nome do novo Agente / Cliente:');
-    if (!name || !name.trim()) return;
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') + '-' + Date.now().toString().slice(-4);
-    const newWs = {
-      name: name.trim(),
-      slug,
-      owner_id: session?.user?.id || null,
-    };
-    if (isSupabaseConfigured && session?.user) {
-      const { data } = await supabase.from('cog_workspaces').insert(newWs).select().single();
-      if (data) {
-        setWorkspaces((prev) => [...prev, data]);
-        setActiveWorkspaceId(data.id);
-        setSelectedBlockId(null);
+    if (isCloudMode) {
+      const { error } = await deleteBlockInSupabase(blk.id);
+      if (error) {
+        setErrorBanner(`Erro ao excluir bloco: ${error}`);
         return;
       }
+    } else {
+      clearBlockDraft(blk.id);
     }
-    const localWs = { ...newWs, id: `ws-${Date.now()}`, embed_token: `tok-${Date.now()}` };
-    setWorkspaces((prev) => [...prev, localWs]);
-    setActiveWorkspaceId(localWs.id);
-    setSelectedBlockId(null);
+
+    setBlocks((prev) => prev.filter((b) => b.id !== blk.id));
+    if (selectedBlockId === blk.id) setSelectedBlockId(null);
   };
 
-  const handleMoveBlock = (id, direction) => {
+  const handleMoveBlock = async (id, direction) => {
     const sorted = [...filteredBlocks];
     const idx = sorted.findIndex((b) => b.id === id);
     const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
     if (idx < 0 || targetIdx < 0 || targetIdx >= sorted.length) return;
-    const current = sorted[idx];
-    const target = sorted[targetIdx];
+
+    const reordered = [...sorted];
+    const [moved] = reordered.splice(idx, 1);
+    reordered.splice(targetIdx, 0, moved);
+
+    const newOrderMap = new Map();
+    reordered.forEach((b, i) => {
+      newOrderMap.set(b.id, i + 1);
+    });
+
+    const pairs = [];
     setBlocks((prev) =>
       prev.map((b) => {
-        if (b.id === current.id) return { ...b, sort_order: target.sort_order };
-        if (b.id === target.id) return { ...b, sort_order: current.sort_order };
-        return b;
+        if (!newOrderMap.has(b.id)) return b;
+        const nextOrder = newOrderMap.get(b.id);
+        pairs.push({ id: b.id, sort_order: nextOrder });
+        return { ...b, sort_order: nextOrder };
       })
     );
+
+    if (isCloudMode && pairs.length > 0) {
+      setSaveStatus('saving');
+      const { error } = await saveBlockOrdersInSupabase(pairs);
+      if (error) {
+        setSaveStatus('error');
+        setErrorBanner(`Erro ao salvar nova ordem: ${error}`);
+      } else {
+        setSaveStatus('saved');
+        setLastSavedAt(new Date());
+      }
+    }
   };
 
-  // Envolve o texto selecionado no textarea com [[OCULTO]]...[[/OCULTO]]
   const handleBlurSelection = () => {
     const el = textareaRef.current;
     if (!el || !selectedBlock) return;
@@ -222,528 +445,719 @@ export default function App() {
     const text = selectedBlock.content_md;
     const selected = text.slice(start, end);
     const updated = text.slice(0, start) + `[[OCULTO]]\n${selected}\n[[/OCULTO]]` + text.slice(end);
-    updateBlock(selectedBlock.id, { content_md: updated });
+    updateBlockWithAutoSave(selectedBlock.id, { content_md: updated }, true);
   };
 
   const handleFileUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const content =
-        typeof reader.result === 'string' && (file.name.endsWith('.txt') || file.name.endsWith('.md'))
-          ? reader.result
-          : `# Conteúdo extraído de: ${file.name}\n\n*(Arquivo anexado — pronto para processamento via Webhook n8n / AnythingLLM)*`;
-      const newId = `blk-file-${Date.now()}`;
-      setBlocks((prev) => [
-        ...prev,
-        {
-          id: newId,
-          workspace_id: activeWorkspaceId,
-          category: 'files',
-          title: `Arquivo: ${file.name}`,
-          sort_order: filteredBlocks.length + 1,
-          is_active: true,
-          is_locked_for_client: false,
-          client_can_edit: true,
-          client_can_delete: true,
-          content_md: content,
-        },
-      ]);
-      setSelectedBlockId(newId);
+    const input = e.target;
+    const file = input.files?.[0];
+    if (!file || !activeWorkspace) return;
+
+    const createFileBlock = async (content) => {
+      const maxOrder = workspaceBlocks.reduce((acc, b) => Math.max(acc, b.sort_order || 0), 0);
+      const payload = {
+        workspace_id: activeWorkspace.id,
+        category: 'files',
+        title: `Arquivo: ${file.name}`,
+        sort_order: maxOrder + 1,
+        is_active: true,
+        is_locked_for_client: false,
+        client_can_edit: true,
+        client_can_delete: true,
+        removal_requested: false,
+        content_md: content,
+      };
+
+      if (isCloudMode) {
+        const { data, error } = await createBlockInSupabase(payload);
+        if (error || !data) {
+          setErrorBanner(`Erro ao salvar arquivo: ${error}`);
+          return;
+        }
+        setBlocks((prev) => [...prev, data]);
+        setSelectedBlockId(data.id);
+        setViewMode('editor');
+        setActiveCategory('files');
+      } else {
+        const localBlock = { ...payload, id: `blk-file-${Date.now()}` };
+        setBlocks((prev) => [...prev, localBlock]);
+        setSelectedBlockId(localBlock.id);
+        setViewMode('editor');
+        setActiveCategory('files');
+      }
+      input.value = '';
     };
-    if (file.name.endsWith('.txt') || file.name.endsWith('.md')) {
+
+    if (file.name.toLowerCase().endsWith('.txt') || file.name.toLowerCase().endsWith('.md')) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        createFileBlock(typeof reader.result === 'string' ? reader.result : '');
+      };
       reader.readAsText(file);
     } else {
-      reader.onload();
+      createFileBlock(
+        `# Conteúdo do arquivo: ${file.name}\n\n*(Arquivo anexado — cole aqui os trechos principais ou resumos que a IA deve consultar.)*`
+      );
     }
   };
 
-  const assembledPrompt = blocks
-    .filter((b) => b.workspace_id === activeWorkspaceId && b.is_active)
-    .sort((a, b) => a.sort_order - b.sort_order)
-    .map((b) => `### ${b.title}\n${b.content_md.replace(/\[\[OCULTO\]\]|\[\[\/OCULTO\]\]/g, '').trim()}`)
-    .join('\n\n---\n\n');
+  const handleCreateWorkspace = async ({ name, ownerEmail, includeStarter }) => {
+    await flushPendingSaves();
 
-  const copyText = (text, setFlag) => {
-    navigator.clipboard.writeText(text);
-    setFlag(true);
-    setTimeout(() => setFlag(false), 2000);
+    if (isCloudMode) {
+      const res = await createWorkspaceInSupabase({
+        name,
+        ownerEmail,
+        includeStarterBlocks: includeStarter,
+        currentUserId: session.user.id,
+        registeredProfiles,
+      });
+
+      if (res.error) {
+        setErrorBanner(res.error);
+      }
+      if (res.workspace) {
+        setWorkspaces((prev) => [...prev, res.workspace]);
+        if (res.blocks?.length) {
+          setBlocks((prev) => [...prev, ...res.blocks]);
+        }
+        setActiveWorkspaceId(res.workspace.id);
+        setSelectedBlockId(res.blocks?.[0]?.id || null);
+        setViewMode('editor');
+        setActiveCategory('all');
+      }
+      setShowNewWsModal(false);
+      return;
+    }
+
+    const newWsId = `ws-${Date.now()}`;
+    const newWs = {
+      id: newWsId,
+      name,
+      slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      owner_email: ownerEmail || null,
+      embed_token: `tok-${Date.now()}`,
+    };
+    const starter = includeStarter
+      ? buildStarterBlocks(newWsId, false).map((b, i) => ({ ...b, id: `blk-${Date.now()}-${i}` }))
+      : [];
+
+    setWorkspaces((prev) => [...prev, newWs]);
+    if (starter.length) setBlocks((prev) => [...prev, ...starter]);
+    setActiveWorkspaceId(newWsId);
+    setSelectedBlockId(starter[0]?.id || null);
+    setViewMode('editor');
+    setActiveCategory('all');
+    setShowNewWsModal(false);
+  };
+
+  const handleRenameWorkspace = async (wsId, newName) => {
+    setWorkspaces((prev) => prev.map((w) => (w.id === wsId ? { ...w, name: newName } : w)));
+    if (isCloudMode) {
+      const { error } = await updateWorkspaceInSupabase(wsId, { name: newName });
+      if (error) setErrorBanner(`Erro ao renomear agente: ${error}`);
+    }
+  };
+
+  const handleDeleteWorkspaceConfirmed = async () => {
+    const ws = confirmDeleteWs;
+    if (!ws) return;
+    setConfirmDeleteWs(null);
+
+    if (isCloudMode) {
+      const { error } = await deleteWorkspaceInSupabase(ws.id);
+      if (error) {
+        setErrorBanner(`Erro ao excluir agente: ${error}`);
+        return;
+      }
+    }
+
+    const remaining = workspaces.filter((w) => w.id !== ws.id);
+    setWorkspaces(remaining);
+    setBlocks((prev) => prev.filter((b) => b.workspace_id !== ws.id));
+    if (activeWorkspaceId === ws.id) {
+      const nextWs = remaining[0] || null;
+      setActiveWorkspaceId(nextWs?.id || null);
+      setSelectedBlockId(null);
+    }
+  };
+
+  const handleSaveAccess = async (wsId, email) => {
+    if (isCloudMode) {
+      const res = await assignWorkspaceAccessInSupabase({
+        workspaceId: wsId,
+        email,
+        currentAdminId: session.user.id,
+        registeredProfiles,
+      });
+      if (res.error) {
+        setErrorBanner(`Erro ao salvar acesso: ${res.error}`);
+        return;
+      }
+      setWorkspaces((prev) =>
+        prev.map((w) =>
+          w.id === wsId
+            ? {
+                ...w,
+                owner_email: email || null,
+                owner_id: res.data?.owner_id ?? w.owner_id,
+              }
+            : w
+        )
+      );
+    } else {
+      setWorkspaces((prev) =>
+        prev.map((w) => (w.id === wsId ? { ...w, owner_email: email || null } : w))
+      );
+    }
+    setAccessTargetWs(null);
+  };
+
+  const assemblePromptForWorkspace = (wsId) =>
+    blocks
+      .filter((b) => b.workspace_id === wsId && b.is_active)
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map(
+        (b) =>
+          `### ${b.title}\n${b.content_md.replace(/\[\[OCULTO\]\]|\[\[\/OCULTO\]\]/g, '').trim()}`
+      )
+      .join('\n\n---\n\n');
+
+  const copyEmbedLink = (ws) => {
+    navigator.clipboard.writeText(`${window.location.origin}/?embed=${ws.embed_token}`);
+    setCopiedEmbed(true);
+    setTimeout(() => setCopiedEmbed(false), 2000);
+  };
+
+  const renderSavePill = () => {
+    if (saveStatus === 'saving') {
+      return (
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-sky-400">
+          <Loader2 className="w-3 h-3 animate-spin" /> Salvando...
+        </span>
+      );
+    }
+    if (saveStatus === 'pending' || dirtyBlockIds.size > 0) {
+      return (
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-400">
+          <Cloud className="w-3 h-3" /> Salvando em instantes...
+        </span>
+      );
+    }
+    if (saveStatus === 'error') {
+      return (
+        <button
+          onClick={flushPendingSaves}
+          className="inline-flex items-center gap-1 text-[11px] text-rose-400 hover:underline cursor-pointer"
+        >
+          <CloudOff className="w-3 h-3" /> Falha ao salvar (Tentar de novo)
+        </button>
+      );
+    }
+    if (saveStatus === 'saved' && lastSavedAt) {
+      const time = lastSavedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      return (
+        <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400">
+          <Check className="w-3 h-3" /> Salvo {isCloudMode ? 'na nuvem' : 'localmente'} • {time}
+        </span>
+      );
+    }
+    return null;
   };
 
   return (
     <div className="h-screen flex bg-[#0d0d0f] text-zinc-100 overflow-hidden">
-      {/* Sidebar Esquerda (Estilo Twenty CRM) */}
-      <aside className="w-60 border-r border-zinc-800/70 bg-[#141416] flex flex-col shrink-0">
-        <div className="p-3 border-b border-zinc-800/70">
-          <div className="flex items-center justify-between gap-2 px-1.5 py-1">
+      <WorkspaceSidebar
+        workspaces={workspaces}
+        activeWorkspace={activeWorkspace}
+        activeWorkspaceId={activeWorkspace?.id}
+        onSelectWorkspace={handleSelectWorkspace}
+        onOpenNewWorkspace={() => setShowNewWsModal(true)}
+        activeCategory={activeCategory}
+        onSelectCategory={setActiveCategory}
+        workspaceBlocks={workspaceBlocks}
+        allBlocks={blocks}
+        viewMode={viewMode}
+        onChangeViewMode={setViewMode}
+        onFileUpload={handleFileUpload}
+        userRole={userRole}
+        userEmail={session?.user?.email}
+        isClientView={isClientView}
+        previewAsClient={previewAsClient}
+        onTogglePreviewAsClient={() => setPreviewAsClient(!previewAsClient)}
+        onSignOut={async () => {
+          await flushPendingSaves();
+          if (isSupabaseConfigured) await supabase.auth.signOut();
+          setDemoMode(false);
+        }}
+      />
+
+      <div className="flex-1 flex flex-col min-w-0">
+        {errorBanner && (
+          <div className="bg-rose-500/15 border-b border-rose-500/30 px-4 py-2 flex items-center justify-between gap-3 text-xs text-rose-200">
             <div className="flex items-center gap-2 min-w-0">
-              <div className="w-6 h-6 rounded-md bg-sky-500/20 border border-sky-500/30 flex items-center justify-center text-sky-400 shrink-0">
-                <Brain className="w-3.5 h-3.5" />
-              </div>
-              <span className="text-xs font-bold text-white truncate">Cognição-IA</span>
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span className="truncate">{errorBanner}</span>
             </div>
-            {!isClientView && (
+            <div className="flex items-center gap-2 shrink-0">
               <button
-                onClick={handleAddWorkspace}
-                title="Novo Agente / Cliente"
-                className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white cursor-pointer"
+                onClick={flushPendingSaves}
+                className="inline-flex items-center gap-1 rounded bg-rose-500/20 px-2 py-0.5 hover:bg-rose-500/30 cursor-pointer"
               >
-                <Plus className="w-3.5 h-3.5" />
+                <RefreshCw className="w-3 h-3" /> Tentar salvar
               </button>
-            )}
-          </div>
-
-          <div className="mt-2 relative">
-            <select
-              value={activeWorkspaceId}
-              onChange={(e) => {
-                setActiveWorkspaceId(e.target.value);
-                setSelectedBlockId(null);
-              }}
-              className="w-full appearance-none rounded-lg border border-zinc-800 bg-zinc-900/90 px-2.5 py-1.5 pr-7 text-xs font-medium text-zinc-200 focus:border-sky-500 focus:outline-none cursor-pointer"
-            >
-              {workspaces.map((ws) => (
-                <option key={ws.id} value={ws.id}>
-                  {ws.name}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="w-3.5 h-3.5 text-zinc-500 absolute right-2 top-2 pointer-events-none" />
-          </div>
-        </div>
-
-        <div className="p-3 space-y-5 flex-1 overflow-y-auto">
-          <div>
-            <div className="px-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">
-              Base de Conhecimento
-            </div>
-            <button
-              onClick={() => setActiveCategory('all')}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
-                activeCategory === 'all'
-                  ? 'bg-zinc-800 text-white'
-                  : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'
-              }`}
-            >
-              <span>Todos os Blocos</span>
-              <span className="text-[11px] text-zinc-500">{blocks.length}</span>
-            </button>
-          </div>
-
-          <div>
-            <div className="px-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">
-              Módulos do Agente
-            </div>
-            <div className="space-y-1">
-              {CATEGORIES.map((cat) => (
-                <button
-                  key={cat.id}
-                  onClick={() => setActiveCategory(cat.id)}
-                  className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
-                    activeCategory === cat.id
-                      ? 'bg-zinc-800 text-white'
-                      : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'
-                  }`}
-                >
-                  <span className={`w-2 h-2 rounded-full ${cat.dot}`} />
-                  <span className="truncate">{cat.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <div className="px-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">
-              Anexar Arquivo (RAG / MD)
-            </div>
-            <label className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-zinc-700 hover:border-sky-500/60 bg-zinc-900/50 text-xs text-zinc-400 hover:text-sky-400 cursor-pointer transition">
-              <Upload className="w-3.5 h-3.5" />
-              <span>Subir PDF / TXT / MD</span>
-              <input type="file" className="hidden" onChange={handleFileUpload} />
-            </label>
-          </div>
-        </div>
-
-        <div className="p-3 border-t border-zinc-800/80 space-y-2">
-          <button
-            onClick={() => setPreviewAsClient(!previewAsClient)}
-            className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium border transition cursor-pointer ${
-              isClientView
-                ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
-                : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
-            }`}
-          >
-            {isClientView ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-            {isClientView ? 'Visão do Cliente (Ativa)' : 'Simular Visão do Cliente'}
-          </button>
-
-          <button
-            onClick={() => {
-              if (isSupabaseConfigured) supabase.auth.signOut();
-              setDemoMode(false);
-            }}
-            className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg text-xs text-zinc-500 hover:text-zinc-300 cursor-pointer"
-          >
-            <LogOut className="w-3.5 h-3.5" /> Sair
-          </button>
-        </div>
-      </aside>
-
-      {/* Lista de Blocos */}
-      <section className="w-72 border-r border-zinc-800/80 bg-[#101013] flex flex-col shrink-0">
-        <div className="p-4 border-b border-zinc-800/80 flex items-center justify-between">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-            Blocos ({filteredBlocks.length})
-          </h2>
-          <button
-            onClick={handleAddBlock}
-            className="flex items-center gap-1 rounded-md bg-sky-500 hover:bg-sky-400 text-zinc-950 px-2.5 py-1 text-xs font-semibold cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" /> Novo
-          </button>
-        </div>
-
-        <div className="p-2 space-y-1.5 overflow-y-auto flex-1">
-          {filteredBlocks.map((block) => {
-            const cat = CATEGORIES.find((c) => c.id === block.category);
-            const isSelected = selectedBlock?.id === block.id;
-            return (
-              <div
-                key={block.id}
-                onClick={() => setSelectedBlockId(block.id)}
-                className={`p-3 rounded-xl border transition cursor-pointer ${
-                  isSelected
-                    ? 'bg-zinc-800/80 border-zinc-700'
-                    : 'bg-zinc-900/40 border-zinc-800/60 hover:bg-zinc-900'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className={`text-[10px] font-semibold uppercase ${cat?.color || 'text-zinc-400'}`}>
-                    #{block.sort_order} • {cat?.label}
-                  </span>
-                  <div className="flex items-center gap-1">
-                    {!isClientView && (
-                      <>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleMoveBlock(block.id, 'up'); }}
-                          title="Subir ordem"
-                          className="p-0.5 text-zinc-500 hover:text-white cursor-pointer"
-                        >
-                          <ArrowUp className="w-3 h-3" />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleMoveBlock(block.id, 'down'); }}
-                          title="Descer ordem"
-                          className="p-0.5 text-zinc-500 hover:text-white cursor-pointer"
-                        >
-                          <ArrowDown className="w-3 h-3" />
-                        </button>
-                      </>
-                    )}
-                    {block.is_locked_for_client && (
-                      <Lock className="w-3 h-3 text-amber-400 shrink-0" />
-                    )}
-                  </div>
-                </div>
-                <div className="text-sm font-medium text-zinc-100 truncate">{block.title}</div>
-                {block.removal_requested && (
-                  <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-rose-400">
-                    <AlertTriangle className="w-3 h-3" /> Remoção solicitada (Oculto p/ IA)
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* Área Principal: Editor Colorido + Preview */}
-      <main className="flex-1 flex flex-col min-w-0">
-        <header className="h-14 border-b border-zinc-800/80 px-6 flex items-center justify-between bg-[#121215]">
-          <div className="flex items-center gap-3 min-w-0">
-            <FileText className="w-4 h-4 text-sky-400 shrink-0" />
-            <span className="text-sm font-semibold text-white truncate">
-              {selectedBlock ? selectedBlock.title : 'Selecione um bloco'}
-            </span>
-          </div>
-
-          {!isClientView && (
-            <div className="flex items-center gap-2">
               <button
-                onClick={() => {
-                  setAccessEmail(activeWorkspace.owner_email || '');
-                  setShowAccessModal(true);
-                }}
-                className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 cursor-pointer"
+                onClick={() => setErrorBanner(null)}
+                className="p-0.5 text-rose-300 hover:text-white cursor-pointer"
               >
-                <Lock className="w-3.5 h-3.5 text-sky-400" />
-                Acesso do Cliente
-              </button>
-
-              <button
-                onClick={() =>
-                  copyText(
-                    `${window.location.origin}/?embed=${activeWorkspace.embed_token}`,
-                    setCopiedEmbed
-                  )
-                }
-                className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 cursor-pointer"
-              >
-                {copiedEmbed ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Link2 className="w-3.5 h-3.5" />}
-                {copiedEmbed ? 'Link Copiado!' : 'Link de Integração'}
-              </button>
-
-              <button
-                onClick={() => setShowPromptModal(true)}
-                className="flex items-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-3 py-1.5 text-xs font-semibold cursor-pointer"
-              >
-                <Terminal className="w-3.5 h-3.5" />
-                Testar Prompt Unificado
+                <X className="w-3.5 h-3.5" />
               </button>
             </div>
-          )}
-        </header>
-
-        {selectedBlock ? (
-          <div className="flex-1 overflow-y-auto p-6 space-y-5">
-            {/* Controles do Bloco */}
-            {(!isClientView || selectedBlock.client_can_edit) && (
-              <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl border border-zinc-800 bg-zinc-900/50">
-                <input
-                  type="text"
-                  value={selectedBlock.title}
-                  onChange={(e) => updateBlock(selectedBlock.id, { title: e.target.value })}
-                  className="flex-1 min-w-[200px] bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none"
-                />
-
-                {!isClientView && (
-                  <>
-                    <button
-                      onClick={handleBlurSelection}
-                      title="Selecione um trecho no texto abaixo e clique aqui para borrar para o cliente"
-                      className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 text-xs font-medium text-amber-300 cursor-pointer"
-                    >
-                      <Lock className="w-3.5 h-3.5" /> Borrar Seleção
-                    </button>
-
-                    <button
-                      onClick={() =>
-                        updateBlock(selectedBlock.id, {
-                          is_locked_for_client: !selectedBlock.is_locked_for_client,
-                        })
-                      }
-                      className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium cursor-pointer ${
-                        selectedBlock.is_locked_for_client
-                          ? 'border-amber-500/40 bg-amber-500/15 text-amber-300'
-                          : 'border-zinc-700 bg-zinc-900 text-zinc-300'
-                      }`}
-                    >
-                      {selectedBlock.is_locked_for_client ? (
-                        <Lock className="w-3.5 h-3.5" />
-                      ) : (
-                        <Unlock className="w-3.5 h-3.5" />
-                      )}
-                      {selectedBlock.is_locked_for_client ? 'Bloco Oculto p/ Cliente' : 'Visível p/ Cliente'}
-                    </button>
-                  </>
-                )}
-
-                <button
-                  onClick={() => handleSaveBlock()}
-                  disabled={saving}
-                  className="flex items-center gap-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-zinc-950 px-3 py-1.5 text-xs font-semibold cursor-pointer disabled:opacity-50"
-                >
-                  {savedToast ? <Check className="w-3.5 h-3.5" /> : null}
-                  {saving ? 'Salvando...' : savedToast ? 'Salvo!' : 'Salvar'}
-                </button>
-
-                {!isClientView ? (
-                  <div className="flex items-center gap-1.5">
-                    {selectedBlock.removal_requested && (
-                      <button
-                        onClick={() => handleRestoreBlock(selectedBlock.id)}
-                        title="Restaurar bloco para a IA"
-                        className="flex items-center gap-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 cursor-pointer"
-                      >
-                        <RotateCcw className="w-3.5 h-3.5" /> Restaurar
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleDeleteBlock(selectedBlock.id)}
-                      title="Apagar definitivamente"
-                      className="p-1.5 rounded-lg border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 cursor-pointer"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ) : (
-                  !selectedBlock.removal_requested ? (
-                    <button
-                      onClick={() => handleRequestRemoval(selectedBlock.id)}
-                      className="flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-xs font-medium text-rose-300 hover:bg-rose-500/20 cursor-pointer"
-                    >
-                      <AlertTriangle className="w-3.5 h-3.5" /> Solicitar remoção
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => handleCancelRemoval(selectedBlock.id)}
-                      className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 cursor-pointer"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" /> Cancelar remoção
-                    </button>
-                  )
-                )}
-              </div>
-            )}
-
-            {/* Editor Único Colorido ao Vivo (Admin) ou Visão Protegida do Cliente */}
-            {!isClientView || (clientEditing && selectedBlock.client_can_edit && !selectedBlock.is_locked_for_client) ? (
-              <div className="flex flex-col">
-                <div className="text-xs font-medium text-zinc-400 mb-2 flex items-center justify-between">
-                  <span className="flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-sky-400" />
-                    {isClientView ? 'Editando Informações Públicas' : 'Editor Colorido ao Vivo (Markdown)'}
-                  </span>
-                  {isClientView ? (
-                    <button
-                      onClick={() => setClientEditing(false)}
-                      className="text-xs text-sky-400 hover:underline cursor-pointer"
-                    >
-                      Concluir edição
-                    </button>
-                  ) : (
-                    <span className="text-[11px] text-zinc-500">
-                      # Azul • - / 1. Verde • "Falas" Laranja • [[OCULTO]] Borrado p/ cliente
-                    </span>
-                  )}
-                </div>
-                <LivePromptEditor
-                  textareaRef={textareaRef}
-                  value={
-                    isClientView
-                      ? selectedBlock.content_md.replace(/\[\[OCULTO\]\][\s\S]*?\[\[\/OCULTO\]\]/g, '').trim()
-                      : selectedBlock.content_md
-                  }
-                  onChange={(val) => {
-                    if (!isClientView) {
-                      updateBlock(selectedBlock.id, { content_md: val });
-                    } else {
-                      const secrets = selectedBlock.content_md.match(/\[\[OCULTO\]\][\s\S]*?\[\[\/OCULTO\]\]/g) || [];
-                      const merged = secrets.length ? `${val}\n\n${secrets.join('\n\n')}` : val;
-                      updateBlock(selectedBlock.id, { content_md: merged });
-                    }
-                  }}
-                />
-              </div>
-            ) : (
-              <div>
-                <div className="text-xs font-medium text-zinc-400 mb-2 flex items-center justify-between">
-                  <span className="flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-sky-400" />
-                    Visualização (Modo Cliente)
-                  </span>
-                  {selectedBlock.client_can_edit && !selectedBlock.is_locked_for_client && (
-                    <button
-                      onClick={() => setClientEditing(true)}
-                      className="rounded-md bg-sky-500/15 border border-sky-500/30 px-2.5 py-1 text-xs font-medium text-sky-400 hover:bg-sky-500/25 cursor-pointer"
-                    >
-                      Editar informações
-                    </button>
-                  )}
-                </div>
-                <div className="rounded-xl border border-zinc-800 bg-[#141417] p-5 min-h-[340px]">
-                  <ColoredMarkdown
-                    content={selectedBlock.content_md}
-                    isClientView={isClientView}
-                    isBlockLocked={selectedBlock.is_locked_for_client}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-sm text-zinc-500">
-            Selecione ou crie um bloco na barra lateral.
           </div>
         )}
-      </main>
 
-      {/* Modal: Acesso do Cliente a este Agente */}
-      {showAccessModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-[#141417] p-6 shadow-2xl space-y-4">
-            <div>
-              <h3 className="text-base font-bold text-white">Acesso do Cliente — {activeWorkspace.name}</h3>
-              <p className="text-xs text-zinc-400 mt-1">
-                Defina qual e-mail de usuário tem permissão para acessar e editar este agente específico.
-              </p>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-zinc-400 mb-1.5">E-mail do Usuário (Cliente)</label>
-              <input
-                type="email"
-                value={accessEmail}
-                onChange={(e) => setAccessEmail(e.target.value)}
-                placeholder="cliente@empresa.com"
-                className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white focus:border-sky-500 focus:outline-none"
-              />
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
+        {!activeWorkspace ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+            <FileText className="w-10 h-10 text-zinc-600 mb-3" />
+            <h2 className="text-base font-semibold text-white">
+              {userRole === 'client'
+                ? 'Nenhum agente vinculado ao seu usuário'
+                : 'Nenhum agente criado ainda'}
+            </h2>
+            <p className="text-xs text-zinc-400 mt-1 max-w-md">
+              {userRole === 'client'
+                ? 'Peça para o administrador liberar o acesso do seu e-mail no painel.'
+                : 'Crie seu primeiro agente de IA para organizar o conhecimento e conectar no n8n.'}
+            </p>
+            {userRole === 'admin' && (
               <button
-                onClick={() => setShowAccessModal(false)}
-                className="rounded-lg border border-zinc-700 px-4 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 cursor-pointer"
+                onClick={() => setShowNewWsModal(true)}
+                className="mt-4 flex items-center gap-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-zinc-950 px-4 py-2 text-xs font-semibold cursor-pointer"
               >
-                Cancelar
+                <Plus className="w-4 h-4" /> Criar Primeiro Agente
               </button>
-              <button
-                onClick={() => {
-                  setWorkspaces((prev) =>
-                    prev.map((w) => (w.id === activeWorkspaceId ? { ...w, owner_email: accessEmail } : w))
-                  );
-                  setShowAccessModal(false);
-                }}
-                className="rounded-lg bg-sky-500 hover:bg-sky-400 text-zinc-950 px-4 py-1.5 text-xs font-semibold cursor-pointer"
-              >
-                Salvar Acesso
-              </button>
-            </div>
+            )}
           </div>
-        </div>
+        ) : viewMode === 'overview' && !isClientView ? (
+          <AdminOverview
+            workspaces={workspaces}
+            blocks={blocks}
+            onSelectWorkspace={(wsId) => {
+              handleSelectWorkspace(wsId);
+              setViewMode('editor');
+            }}
+            onOpenNewWorkspace={() => setShowNewWsModal(true)}
+            onOpenAccessModal={(ws) => setAccessTargetWs(ws)}
+            onOpenPromptModal={async (ws) => {
+              await flushPendingSaves();
+              setPromptTargetWs(ws);
+            }}
+            onRenameWorkspace={handleRenameWorkspace}
+            onDeleteWorkspace={(ws) => setConfirmDeleteWs(ws)}
+          />
+        ) : (
+          <div className="flex-1 flex min-w-0 overflow-hidden">
+            {/* Lista de Blocos */}
+            <section className="w-72 border-r border-zinc-800/80 bg-[#101013] flex flex-col shrink-0">
+              <div className="p-4 border-b border-zinc-800/80 flex items-center justify-between">
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                  Blocos ({filteredBlocks.length})
+                </h2>
+                <button
+                  onClick={handleAddBlock}
+                  className="flex items-center gap-1 rounded-md bg-sky-500 hover:bg-sky-400 text-zinc-950 px-2.5 py-1 text-xs font-semibold cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Novo
+                </button>
+              </div>
+
+              <div className="p-2 space-y-1.5 overflow-y-auto flex-1">
+                {filteredBlocks.map((block) => {
+                  const cat = CATEGORIES.find((c) => c.id === block.category);
+                  const isSelected = selectedBlock?.id === block.id;
+                  const isDirty = dirtyBlockIds.has(block.id);
+
+                  return (
+                    <div
+                      key={block.id}
+                      onClick={() => handleSelectBlock(block.id)}
+                      className={`p-3 rounded-xl border transition cursor-pointer ${
+                        isSelected
+                          ? 'bg-zinc-800/80 border-zinc-700'
+                          : 'bg-zinc-900/40 border-zinc-800/60 hover:bg-zinc-900'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <span className={`text-[10px] font-semibold uppercase ${cat?.color || 'text-zinc-400'}`}>
+                          #{block.sort_order} • {cat?.label}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          {isDirty && (
+                            <span
+                              title="Alteração pendente de salvamento"
+                              className="w-1.5 h-1.5 rounded-full bg-amber-400"
+                            />
+                          )}
+                          {!isClientView && (
+                            <>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleMoveBlock(block.id, 'up');
+                                }}
+                                title="Subir ordem"
+                                className="p-0.5 text-zinc-500 hover:text-white cursor-pointer"
+                              >
+                                <ArrowUp className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleMoveBlock(block.id, 'down');
+                                }}
+                                title="Descer ordem"
+                                className="p-0.5 text-zinc-500 hover:text-white cursor-pointer"
+                              >
+                                <ArrowDown className="w-3 h-3" />
+                              </button>
+                            </>
+                          )}
+                          {block.is_locked_for_client && (
+                            <Lock className="w-3 h-3 text-amber-400 shrink-0" />
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-sm font-medium text-zinc-100 truncate">{block.title}</div>
+                      {(block.removal_requested || (!block.is_active && isClientView)) && (
+                        <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-rose-400">
+                          <AlertTriangle className="w-3 h-3" /> Remoção solicitada (Oculto p/ IA)
+                        </div>
+                      )}
+                      {!block.is_active && !block.removal_requested && !isClientView && (
+                        <div className="mt-1 text-[10px] text-zinc-500">Inativo (Fora da IA)</div>
+                      )}
+                    </div>
+                  );
+                })}
+                {filteredBlocks.length === 0 && (
+                  <div className="p-6 text-center text-xs text-zinc-500">
+                    Nenhum bloco nesta categoria. Clique em <strong>+ Novo</strong> para criar.
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {/* Área Principal */}
+            <main className="flex-1 flex flex-col min-w-0">
+              <header className="h-14 border-b border-zinc-800/80 px-6 flex items-center justify-between gap-4 bg-[#121215]">
+                <div className="flex items-center gap-3 min-w-0">
+                  <FileText className="w-4 h-4 text-sky-400 shrink-0" />
+                  <span className="text-sm font-semibold text-white truncate">
+                    {selectedBlock ? selectedBlock.title : activeWorkspace.name}
+                  </span>
+                  <div className="hidden sm:block">{renderSavePill()}</div>
+                </div>
+
+                {!isClientView && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => setAccessTargetWs(activeWorkspace)}
+                      className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 cursor-pointer"
+                    >
+                      <Lock className="w-3.5 h-3.5 text-sky-400" />
+                      Acesso do Cliente
+                    </button>
+
+                    <button
+                      onClick={() => copyEmbedLink(activeWorkspace)}
+                      className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 cursor-pointer"
+                    >
+                      {copiedEmbed ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : (
+                        <Link2 className="w-3.5 h-3.5" />
+                      )}
+                      {copiedEmbed ? 'Link Copiado!' : 'Link de Integração'}
+                    </button>
+
+                    <button
+                      onClick={async () => {
+                        await flushPendingSaves();
+                        setPromptTargetWs(activeWorkspace);
+                      }}
+                      className="flex items-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-3 py-1.5 text-xs font-semibold cursor-pointer"
+                    >
+                      <Terminal className="w-3.5 h-3.5" />
+                      Testar Prompt Unificado
+                    </button>
+                  </div>
+                )}
+              </header>
+
+              {selectedBlock ? (
+                <div className="flex-1 overflow-y-auto p-6 space-y-5">
+                  {/* Controles do Bloco */}
+                  {(!isClientView || (selectedBlock.client_can_edit && !selectedBlock.is_locked_for_client)) && (
+                    <div className="flex flex-wrap items-center gap-2.5 p-3 rounded-xl border border-zinc-800 bg-zinc-900/50">
+                      <input
+                        type="text"
+                        value={selectedBlock.title}
+                        onChange={(e) =>
+                          updateBlockWithAutoSave(selectedBlock.id, { title: e.target.value })
+                        }
+                        className="flex-1 min-w-[200px] bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none"
+                      />
+
+                      {!isClientView && (
+                        <>
+                          <select
+                            value={selectedBlock.category}
+                            onChange={(e) =>
+                              updateBlockWithAutoSave(
+                                selectedBlock.id,
+                                { category: e.target.value },
+                                true
+                              )
+                            }
+                            className="rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-200 focus:border-sky-500 focus:outline-none cursor-pointer"
+                          >
+                            {CATEGORIES.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.label}
+                              </option>
+                            ))}
+                          </select>
+
+                          <button
+                            onClick={handleBlurSelection}
+                            title="Selecione um trecho no texto abaixo e clique aqui para borrar para o cliente"
+                            className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 text-xs font-medium text-amber-300 cursor-pointer"
+                          >
+                            <Lock className="w-3.5 h-3.5" /> Borrar Seleção
+                          </button>
+
+                          <button
+                            onClick={() =>
+                              updateBlockWithAutoSave(
+                                selectedBlock.id,
+                                { is_locked_for_client: !selectedBlock.is_locked_for_client },
+                                true
+                              )
+                            }
+                            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium cursor-pointer ${
+                              selectedBlock.is_locked_for_client
+                                ? 'border-amber-500/40 bg-amber-500/15 text-amber-300'
+                                : 'border-zinc-700 bg-zinc-900 text-zinc-300'
+                            }`}
+                          >
+                            {selectedBlock.is_locked_for_client ? (
+                              <Lock className="w-3.5 h-3.5" />
+                            ) : (
+                              <Unlock className="w-3.5 h-3.5" />
+                            )}
+                            {selectedBlock.is_locked_for_client
+                              ? 'Bloco Oculto p/ Cliente'
+                              : 'Visível p/ Cliente'}
+                          </button>
+                        </>
+                      )}
+
+                      <button
+                        onClick={() => persistBlock(selectedBlock.id)}
+                        disabled={saveStatus === 'saving'}
+                        className="flex items-center gap-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-zinc-950 px-3 py-1.5 text-xs font-semibold cursor-pointer disabled:opacity-50"
+                      >
+                        {saveStatus === 'saved' && !dirtyBlockIds.has(selectedBlock.id) ? (
+                          <Check className="w-3.5 h-3.5" />
+                        ) : null}
+                        {saveStatus === 'saving' ? 'Salvando...' : 'Salvar agora'}
+                      </button>
+
+                      {!isClientView ? (
+                        <div className="flex items-center gap-1.5">
+                          {(selectedBlock.removal_requested || !selectedBlock.is_active) && (
+                            <button
+                              onClick={() =>
+                                updateBlockWithAutoSave(
+                                  selectedBlock.id,
+                                  { removal_requested: false, is_active: true },
+                                  true
+                                )
+                              }
+                              title="Restaurar bloco para a IA"
+                              className="flex items-center gap-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 cursor-pointer"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" /> Restaurar
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setConfirmDeleteBlock(selectedBlock)}
+                            title="Apagar definitivamente"
+                            className="p-1.5 rounded-lg border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : !selectedBlock.removal_requested && selectedBlock.is_active ? (
+                        <button
+                          onClick={() => {
+                            updateBlockWithAutoSave(
+                              selectedBlock.id,
+                              { removal_requested: true, is_active: false },
+                              true
+                            );
+                            setClientEditing(false);
+                          }}
+                          className="flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-xs font-medium text-rose-300 hover:bg-rose-500/20 cursor-pointer"
+                        >
+                          <AlertTriangle className="w-3.5 h-3.5" /> Solicitar remoção
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() =>
+                            updateBlockWithAutoSave(
+                              selectedBlock.id,
+                              { removal_requested: false, is_active: true },
+                              true
+                            )
+                          }
+                          className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 cursor-pointer"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" /> Cancelar remoção
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Editor Colorido ao Vivo (Admin) ou Visão Protegida do Cliente */}
+                  {!isClientView ||
+                  (clientEditing && selectedBlock.client_can_edit && !selectedBlock.is_locked_for_client) ? (
+                    <div className="flex flex-col">
+                      <div className="text-xs font-medium text-zinc-400 mb-2 flex items-center justify-between">
+                        <span className="flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+                          {isClientView
+                            ? 'Editando Informações (salvamento automático ativo)'
+                            : 'Editor Colorido ao Vivo (Markdown • salvamento automático)'}
+                        </span>
+                        {isClientView ? (
+                          <button
+                            onClick={async () => {
+                              await flushPendingSaves();
+                              setClientEditing(false);
+                            }}
+                            className="text-xs text-sky-400 hover:underline cursor-pointer"
+                          >
+                            Concluir edição
+                          </button>
+                        ) : (
+                          <span className="text-[11px] text-zinc-500">
+                            # Azul • - / 1. Verde • "Falas" Laranja • [[OCULTO]] Borrado p/ cliente
+                          </span>
+                        )}
+                      </div>
+                      <LivePromptEditor
+                        textareaRef={textareaRef}
+                        value={
+                          isClientView
+                            ? selectedBlock.content_md.replace(
+                                /(?:\r?\n)*\[\[OCULTO\]\][\s\S]*?\[\[\/OCULTO\]\]/g,
+                                ''
+                              )
+                            : selectedBlock.content_md
+                        }
+                        onChange={(val) => {
+                          if (!isClientView) {
+                            updateBlockWithAutoSave(selectedBlock.id, { content_md: val });
+                          } else {
+                            const secrets =
+                              selectedBlock.content_md.match(/\[\[OCULTO\]\][\s\S]*?\[\[\/OCULTO\]\]/g) || [];
+                            const merged = secrets.length ? `${val}\n\n${secrets.join('\n\n')}` : val;
+                            updateBlockWithAutoSave(selectedBlock.id, { content_md: merged });
+                          }
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="text-xs font-medium text-zinc-400 mb-2 flex items-center justify-between">
+                        <span className="flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+                          Visualização do Bloco
+                        </span>
+                        {selectedBlock.client_can_edit && !selectedBlock.is_locked_for_client && (
+                          <button
+                            onClick={() => setClientEditing(true)}
+                            className="rounded-md bg-sky-500/15 border border-sky-500/30 px-2.5 py-1 text-xs font-medium text-sky-400 hover:bg-sky-500/25 cursor-pointer"
+                          >
+                            Editar informações
+                          </button>
+                        )}
+                      </div>
+                      <div className="rounded-xl border border-zinc-800 bg-[#141417] p-5 min-h-[340px]">
+                        <ColoredMarkdown
+                          content={selectedBlock.content_md}
+                          isClientView={isClientView}
+                          isBlockLocked={selectedBlock.is_locked_for_client}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-sm text-zinc-500">
+                  Selecione ou crie um bloco na barra lateral.
+                </div>
+              )}
+            </main>
+          </div>
+        )}
+      </div>
+
+      {/* Modais */}
+      {showNewWsModal && (
+        <NewWorkspaceModal
+          registeredProfiles={registeredProfiles}
+          onClose={() => setShowNewWsModal(false)}
+          onCreate={handleCreateWorkspace}
+        />
       )}
 
-      {/* Modal: Prompt Montado para n8n */}
-      {showPromptModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-3xl rounded-2xl border border-zinc-800 bg-[#141417] p-6 shadow-2xl flex flex-col max-h-[85vh]">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-base font-bold text-white">Prompt Unificado (Como o n8n / Supabase lê)</h3>
-                <p className="text-xs text-zinc-400">
-                  Os trechos borrados para o cliente são enviados normalmente aqui para a IA.
-                </p>
-              </div>
-              <button
-                onClick={() => copyText(assembledPrompt, setCopiedPrompt)}
-                className="flex items-center gap-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-zinc-950 px-3 py-1.5 text-xs font-semibold cursor-pointer"
-              >
-                {copiedPrompt ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                {copiedPrompt ? 'Copiado!' : 'Copiar Prompt'}
-              </button>
-            </div>
-            <pre className="flex-1 overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-xs font-mono text-zinc-300 whitespace-pre-wrap">
-              {assembledPrompt}
-            </pre>
-            <div className="mt-4 flex justify-end">
-              <button
-                onClick={() => setShowPromptModal(false)}
-                className="rounded-lg border border-zinc-700 px-4 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 cursor-pointer"
-              >
-                Fechar
-              </button>
-            </div>
-          </div>
-        </div>
+      {accessTargetWs && (
+        <AccessModal
+          workspace={accessTargetWs}
+          registeredProfiles={registeredProfiles}
+          onClose={() => setAccessTargetWs(null)}
+          onSave={handleSaveAccess}
+        />
+      )}
+
+      {promptTargetWs && (
+        <PromptModal
+          workspace={promptTargetWs}
+          assembledPrompt={assemblePromptForWorkspace(promptTargetWs.id)}
+          onClose={() => setPromptTargetWs(null)}
+        />
+      )}
+
+      {confirmDeleteBlock && (
+        <ConfirmModal
+          title="Excluir bloco definitivamente?"
+          description={`O bloco "${confirmDeleteBlock.title}" será removido permanentemente do agente e do Supabase.`}
+          confirmLabel="Excluir bloco"
+          onCancel={() => setConfirmDeleteBlock(null)}
+          onConfirm={handleDeleteBlockConfirmed}
+        />
+      )}
+
+      {confirmDeleteWs && (
+        <ConfirmModal
+          title="Excluir agente e todos os blocos?"
+          description={`Tem certeza que deseja excluir "${confirmDeleteWs.name}"? Todos os blocos vinculados serão apagados.`}
+          confirmLabel="Excluir agente"
+          onCancel={() => setConfirmDeleteWs(null)}
+          onConfirm={handleDeleteWorkspaceConfirmed}
+        />
       )}
     </div>
   );

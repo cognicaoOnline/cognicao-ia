@@ -22,18 +22,30 @@ export function AuthScreen({ onDemoLogin }) {
     try {
       if (isSignUp) {
         const { error } = await supabase.auth.signUp({
-          email,
+          email: email.trim(),
           password,
-          options: { data: { full_name: fullName, role: 'client' } },
+          options: { data: { full_name: fullName.trim(), role: 'client' } },
         });
         if (error) throw error;
         setMessage('Cadastro realizado! Verifique seu e-mail ou faça login.');
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        const { error } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
         if (error) throw error;
       }
     } catch (err) {
-      setMessage(err.message || 'Erro ao autenticar.');
+      const msg = err?.message || '';
+      if (msg.includes('Invalid login credentials')) {
+        setMessage('E-mail ou senha incorretos.');
+      } else if (msg.includes('Email not confirmed')) {
+        setMessage('Confirme seu e-mail antes de entrar.');
+      } else if (msg.includes('User already registered')) {
+        setMessage('Este e-mail já está cadastrado. Faça login.');
+      } else {
+        setMessage(msg || 'Erro ao autenticar.');
+      }
     } finally {
       setLoading(false);
     }

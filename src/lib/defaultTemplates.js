@@ -10,22 +10,25 @@ export const INITIAL_DEMO_WORKSPACES = [
     id: 'ws-clinica-exemplo',
     name: 'Clínica Movimento & Saúde',
     slug: 'clinica-movimento',
+    owner_email: 'cliente@clinica.com',
     embed_token: 'demo-token-123',
   },
 ];
 
-export const INITIAL_DEMO_BLOCKS = [
-  {
-    id: 'blk-1',
-    workspace_id: 'ws-clinica-exemplo',
-    category: 'instructions',
-    title: 'Fundamento e Regras do Agente',
-    sort_order: 1,
-    is_active: true,
-    is_locked_for_client: true,
-    client_can_edit: false,
-    client_can_delete: false,
-    content_md: `# Identidade da Secretária IA
+export const buildStarterBlocks = (workspaceId, includeIds = false) => {
+  const templates = [
+    {
+      id: 'blk-1',
+      workspace_id: workspaceId,
+      category: 'instructions',
+      title: 'Fundamento e Regras do Agente',
+      sort_order: 1,
+      is_active: true,
+      is_locked_for_client: true,
+      client_can_edit: false,
+      client_can_delete: false,
+      removal_requested: false,
+      content_md: `# Identidade da Secretária IA
 Você é a **Ana**, assistente virtual oficial da {{empresa_nome}}.
 Responda sempre com empatia, frases curtas e foco em conversão.
 
@@ -35,54 +38,62 @@ REGRA INTERNA DE ENGENHARIA DE PROMPT:
 - Se o cliente demonstrar objeção de preço, ofereça primeiro a aula experimental gratuita antes de encerrar.
 - Sempre valide o horário disponível usando a tool de agendamento antes de confirmar.
 [[/OCULTO]]`,
-  },
-  {
-    id: 'blk-2',
-    workspace_id: 'ws-clinica-exemplo',
-    category: 'knowledge',
-    title: 'Informações da Empresa & Endereço',
-    sort_order: 2,
-    is_active: true,
-    is_locked_for_client: false,
-    client_can_edit: true,
-    client_can_delete: false,
-    content_md: `# Dados Gerais
+    },
+    {
+      id: 'blk-2',
+      workspace_id: workspaceId,
+      category: 'knowledge',
+      title: 'Informações da Empresa & Endereço',
+      sort_order: 2,
+      is_active: true,
+      is_locked_for_client: false,
+      client_can_edit: true,
+      client_can_delete: false,
+      removal_requested: false,
+      content_md: `# Dados Gerais
 - **Endereço:** Rua das Flores, 450 - Centro
 - **Horário de Funcionamento:** Segunda a Sexta, das 07h às 21h | Sábado, das 08h às 13h
 - **Estacionamento:** Convênio gratuito por 2 horas no local.`,
-  },
-  {
-    id: 'blk-3',
-    workspace_id: 'ws-clinica-exemplo',
-    category: 'knowledge',
-    title: 'Serviços & Preços (Pilates, Dança, Jiu-Jitsu)',
-    sort_order: 3,
-    is_active: true,
-    is_locked_for_client: false,
-    client_can_edit: true,
-    client_can_delete: true,
-    content_md: `# Tabela de Serviços
-- **Pilates:** R$ 280/mês (2x na semana) | Aula experimental gratuita.
-- **Dança:** R$ 190/mês (Ritmos e Contemporânea).
-- **Jiu-Jitsu:** R$ 210/mês (Turmas iniciantes e avançadas).
+    },
+    {
+      id: 'blk-3',
+      workspace_id: workspaceId,
+      category: 'knowledge',
+      title: 'Serviços & Preços',
+      sort_order: 3,
+      is_active: true,
+      is_locked_for_client: false,
+      client_can_edit: true,
+      client_can_delete: true,
+      removal_requested: false,
+      content_md: `# Tabela de Serviços
+- **Serviço Principal:** R$ 280/mês | Avaliação inicial gratuita.
+- **Plano Intermediário:** R$ 190/mês.
 
 [[OCULTO]]
-INSTRUÇÃO INTERNA: Mesmo que o cliente pergunte só sobre Pilates, se mencionar interesse em outras modalidades, apresente Dança e Jiu-Jitsu normalmente.
+INSTRUÇÃO INTERNA: Sempre apresente primeiro o benefício antes de informar o valor da mensalidade.
 [[/OCULTO]]`,
-  },
-  {
-    id: 'blk-4',
-    workspace_id: 'ws-clinica-exemplo',
-    category: 'actions',
-    title: 'Agendamentos e Coleta de Dados',
-    sort_order: 4,
-    is_active: true,
-    is_locked_for_client: false,
-    client_can_edit: true,
-    client_can_delete: false,
-    content_md: `# O que você deve fazer ao agendar
+    },
+    {
+      id: 'blk-4',
+      workspace_id: workspaceId,
+      category: 'actions',
+      title: 'Agendamentos e Coleta de Dados',
+      sort_order: 4,
+      is_active: true,
+      is_locked_for_client: false,
+      client_can_edit: true,
+      client_can_delete: false,
+      removal_requested: false,
+      content_md: `# O que você deve fazer ao agendar
 1. Pedir **Nome completo** e **WhatsApp**.
-2. Perguntar qual **modalidade** e **melhor turno** (manhã, tarde ou noite).
+2. Perguntar qual **serviço** e **melhor turno** (manhã, tarde ou noite).
 3. Chamar a ferramenta de agendamento e confirmar o horário.`,
-  },
-];
+    },
+  ];
+
+  if (includeIds) return templates;
+  return templates.map(({ id, ...rest }) => rest);
+};
+
+export const INITIAL_DEMO_BLOCKS = buildStarterBlocks('ws-clinica-exemplo', true);
