@@ -23,6 +23,8 @@ export default function App() {
   const [selectedBlockId, setSelectedBlockId] = useState(INITIAL_DEMO_BLOCKS[0].id);
 
   const [showPromptModal, setShowPromptModal] = useState(false);
+  const [showAccessModal, setShowAccessModal] = useState(false);
+  const [accessEmail, setAccessEmail] = useState('');
   const [clientEditing, setClientEditing] = useState(false);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [copiedEmbed, setCopiedEmbed] = useState(false);
@@ -382,6 +384,17 @@ export default function App() {
           {!isClientView && (
             <div className="flex items-center gap-2">
               <button
+                onClick={() => {
+                  setAccessEmail(activeWorkspace.owner_email || '');
+                  setShowAccessModal(true);
+                }}
+                className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 cursor-pointer"
+              >
+                <Lock className="w-3.5 h-3.5 text-sky-400" />
+                Acesso do Cliente
+              </button>
+
+              <button
                 onClick={() =>
                   copyText(
                     `${window.location.origin}/?embed=${activeWorkspace.embed_token}`,
@@ -552,6 +565,49 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* Modal: Acesso do Cliente a este Agente */}
+      {showAccessModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-[#141417] p-6 shadow-2xl space-y-4">
+            <div>
+              <h3 className="text-base font-bold text-white">Acesso do Cliente — {activeWorkspace.name}</h3>
+              <p className="text-xs text-zinc-400 mt-1">
+                Defina qual e-mail de usuário tem permissão para acessar e editar este agente específico.
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-zinc-400 mb-1.5">E-mail do Usuário (Cliente)</label>
+              <input
+                type="email"
+                value={accessEmail}
+                onChange={(e) => setAccessEmail(e.target.value)}
+                placeholder="cliente@empresa.com"
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white focus:border-sky-500 focus:outline-none"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowAccessModal(false)}
+                className="rounded-lg border border-zinc-700 px-4 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  setWorkspaces((prev) =>
+                    prev.map((w) => (w.id === activeWorkspaceId ? { ...w, owner_email: accessEmail } : w))
+                  );
+                  setShowAccessModal(false);
+                }}
+                className="rounded-lg bg-sky-500 hover:bg-sky-400 text-zinc-950 px-4 py-1.5 text-xs font-semibold cursor-pointer"
+              >
+                Salvar Acesso
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal: Prompt Montado para n8n */}
       {showPromptModal && (
