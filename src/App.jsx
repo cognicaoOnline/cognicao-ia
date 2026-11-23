@@ -76,6 +76,7 @@ export default function App() {
 
   const isCloudMode = isSupabaseConfigured && Boolean(session?.user) && !demoMode;
   const isClientView = userRole === 'client' || (userRole === 'admin' && previewAsClient);
+  const isEmbedded = new URLSearchParams(window.location.search).get('embedded') === 'true';
 
   // 1. Sessão Supabase
   useEffect(() => {
@@ -728,7 +729,7 @@ export default function App() {
   };
 
   return (
-    <div className="h-screen flex bg-[#0d0d0f] text-zinc-100 overflow-hidden">
+    <div className="h-screen flex bg-[#f8fafc] text-slate-800 overflow-hidden font-sans">
       <WorkspaceSidebar
         workspaces={workspaces}
         activeWorkspace={activeWorkspace}
@@ -748,6 +749,7 @@ export default function App() {
         isClientView={isClientView}
         previewAsClient={previewAsClient}
         onTogglePreviewAsClient={() => setPreviewAsClient(!previewAsClient)}
+        isEmbedded={isEmbedded}
         onSignOut={async () => {
           await flushPendingSaves();
           if (isSupabaseConfigured) await supabase.auth.signOut();
@@ -755,7 +757,7 @@ export default function App() {
         }}
       />
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 bg-[#f8fafc]">
         {errorBanner && (
           <div className="bg-rose-500/15 border-b border-rose-500/30 px-4 py-2 flex items-center justify-between gap-3 text-xs text-rose-200">
             <div className="flex items-center gap-2 min-w-0">
@@ -780,22 +782,24 @@ export default function App() {
         )}
 
         {!activeWorkspace ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-            <FileText className="w-10 h-10 text-zinc-600 mb-3" />
-            <h2 className="text-base font-semibold text-white">
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[#f8fafc]">
+            <div className="w-16 h-16 rounded-3xl bg-slate-100 flex items-center justify-center text-slate-400 mb-4 shadow-xs">
+              <FileText className="w-8 h-8" />
+            </div>
+            <h2 className="text-base font-bold text-slate-800">
               {userRole === 'client'
                 ? 'Nenhum agente vinculado ao seu usuário'
                 : 'Nenhum agente criado ainda'}
             </h2>
-            <p className="text-xs text-zinc-400 mt-1 max-w-md">
+            <p className="text-xs text-slate-500 mt-1 max-w-md">
               {userRole === 'client'
                 ? 'Peça para o administrador liberar o acesso do seu e-mail no painel.'
-                : 'Crie seu primeiro agente de IA para organizar o conhecimento e conectar no n8n.'}
+                : 'Crie seu primeiro agente de IA para organizar o conhecimento e conectar ao seu atendimento.'}
             </p>
             {userRole === 'admin' && (
               <button
                 onClick={() => setShowNewWsModal(true)}
-                className="mt-4 flex items-center gap-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-zinc-950 px-4 py-2 text-xs font-semibold cursor-pointer"
+                className="mt-5 flex items-center gap-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white px-5 py-2.5 text-xs font-semibold cursor-pointer shadow-sm transition"
               >
                 <Plus className="w-4 h-4" /> Criar Primeiro Agente
               </button>
@@ -822,20 +826,22 @@ export default function App() {
         ) : (
           <div className="flex-1 flex min-w-0 overflow-hidden">
             {/* Lista de Blocos */}
-            <section className="w-72 border-r border-zinc-800/80 bg-[#101013] flex flex-col shrink-0">
-              <div className="p-4 border-b border-zinc-800/80 flex items-center justify-between">
-                <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                  Blocos ({filteredBlocks.length})
-                </h2>
+            <section className="w-80 border-r border-slate-200 bg-white flex flex-col shrink-0 select-none">
+              <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+                <div>
+                  <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Tópicos ({filteredBlocks.length})
+                  </h2>
+                </div>
                 <button
                   onClick={handleAddBlock}
-                  className="flex items-center gap-1 rounded-md bg-sky-500 hover:bg-sky-400 text-zinc-950 px-2.5 py-1 text-xs font-semibold cursor-pointer"
+                  className="flex items-center gap-1 rounded-xl bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 text-xs font-semibold cursor-pointer shadow-xs transition"
                 >
-                  <Plus className="w-3.5 h-3.5" /> Novo
+                  <Plus className="w-3.5 h-3.5" /> Novo Tópico
                 </button>
               </div>
 
-              <div className="p-2 space-y-1.5 overflow-y-auto flex-1">
+              <div className="p-3 space-y-2 overflow-y-auto flex-1">
                 {filteredBlocks.map((block) => {
                   const cat = CATEGORIES.find((c) => c.id === block.category);
                   const isSelected = selectedBlock?.id === block.id;
@@ -845,21 +851,21 @@ export default function App() {
                     <div
                       key={block.id}
                       onClick={() => handleSelectBlock(block.id)}
-                      className={`p-3 rounded-xl border transition cursor-pointer ${
+                      className={`p-3.5 rounded-2xl border transition cursor-pointer ${
                         isSelected
-                          ? 'bg-zinc-800/80 border-zinc-700'
-                          : 'bg-zinc-900/40 border-zinc-800/60 hover:bg-zinc-900'
+                          ? 'bg-sky-50/60 border-sky-300 shadow-xs'
+                          : 'bg-white border-slate-200/80 hover:bg-slate-50 shadow-2xs'
                       }`}
                     >
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <span className={`text-[10px] font-semibold uppercase ${cat?.color || 'text-zinc-400'}`}>
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <span className={`text-[10px] font-bold uppercase tracking-wider ${cat?.color || 'text-slate-400'}`}>
                           #{block.sort_order} • {cat?.label}
                         </span>
                         <div className="flex items-center gap-1">
                           {isDirty && (
                             <span
-                              title="Alteração pendente de salvamento"
-                              className="w-1.5 h-1.5 rounded-full bg-amber-400"
+                              title="Alteração não salva"
+                              className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"
                             />
                           )}
                           {!isClientView && (
@@ -870,7 +876,7 @@ export default function App() {
                                   handleMoveBlock(block.id, 'up');
                                 }}
                                 title="Subir ordem"
-                                className="p-0.5 text-zinc-500 hover:text-white cursor-pointer"
+                                className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
                               >
                                 <ArrowUp className="w-3 h-3" />
                               </button>
@@ -880,32 +886,32 @@ export default function App() {
                                   handleMoveBlock(block.id, 'down');
                                 }}
                                 title="Descer ordem"
-                                className="p-0.5 text-zinc-500 hover:text-white cursor-pointer"
+                                className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
                               >
                                 <ArrowDown className="w-3 h-3" />
                               </button>
                             </>
                           )}
                           {block.is_locked_for_client && (
-                            <Lock className="w-3 h-3 text-amber-400 shrink-0" />
+                            <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                           )}
                         </div>
                       </div>
-                      <div className="text-sm font-medium text-zinc-100 truncate">{block.title}</div>
+                      <div className="text-sm font-bold text-slate-800 truncate">{block.title}</div>
                       {(block.removal_requested || (!block.is_active && isClientView)) && (
-                        <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-rose-400">
-                          <AlertTriangle className="w-3 h-3" /> Remoção solicitada (Oculto p/ IA)
+                        <div className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md">
+                          <AlertTriangle className="w-3 h-3" /> Pausado para a IA
                         </div>
                       )}
                       {!block.is_active && !block.removal_requested && !isClientView && (
-                        <div className="mt-1 text-[10px] text-zinc-500">Inativo (Fora da IA)</div>
+                        <div className="mt-1 text-[11px] font-medium text-slate-400">Inativo</div>
                       )}
                     </div>
                   );
                 })}
                 {filteredBlocks.length === 0 && (
-                  <div className="p-6 text-center text-xs text-zinc-500">
-                    Nenhum bloco nesta categoria. Clique em <strong>+ Novo</strong> para criar.
+                  <div className="p-8 text-center text-xs text-slate-400">
+                    Nenhum tópico nesta categoria. Clique em <strong>+ Novo Tópico</strong> para começar.
                   </div>
                 )}
               </div>
@@ -923,25 +929,25 @@ export default function App() {
                 </div>
 
                 {!isClientView && (
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-2.5 shrink-0">
                     <button
                       onClick={() => setAccessTargetWs(activeWorkspace)}
-                      className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 cursor-pointer"
+                      className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-2xs cursor-pointer transition"
                     >
-                      <Lock className="w-3.5 h-3.5 text-sky-400" />
+                      <Lock className="w-3.5 h-3.5 text-sky-600" />
                       Acesso do Cliente
                     </button>
 
                     <button
                       onClick={() => copyEmbedLink(activeWorkspace)}
-                      className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-200 cursor-pointer"
+                      className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-2xs cursor-pointer transition"
                     >
                       {copiedEmbed ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
                       ) : (
-                        <Link2 className="w-3.5 h-3.5" />
+                        <Link2 className="w-3.5 h-3.5 text-slate-400" />
                       )}
-                      {copiedEmbed ? 'Link Copiado!' : 'Link de Integração'}
+                      {copiedEmbed ? 'Link Copiado!' : 'Copiar Link'}
                     </button>
 
                     <button
@@ -949,27 +955,27 @@ export default function App() {
                         await flushPendingSaves();
                         setPromptTargetWs(activeWorkspace);
                       }}
-                      className="flex items-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-3 py-1.5 text-xs font-semibold cursor-pointer"
+                      className="flex items-center gap-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white px-3.5 py-2 text-xs font-semibold cursor-pointer shadow-xs transition"
                     >
-                      <Terminal className="w-3.5 h-3.5" />
-                      Testar Prompt Unificado
+                      <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+                      Prompt Consolidado
                     </button>
                   </div>
                 )}
               </header>
 
               {selectedBlock ? (
-                <div className="flex-1 overflow-y-auto p-6 space-y-5">
-                  {/* Controles do Bloco */}
+                <div className="flex-1 overflow-y-auto p-8 space-y-6">
+                  {/* Barra de Ações do Bloco */}
                   {(!isClientView || (selectedBlock.client_can_edit && !selectedBlock.is_locked_for_client)) && (
-                    <div className="flex flex-wrap items-center gap-2.5 p-3 rounded-xl border border-zinc-800 bg-zinc-900/50">
+                    <div className="flex flex-wrap items-center gap-3 p-3.5 rounded-2xl border border-slate-200/80 bg-white shadow-xs">
                       <input
                         type="text"
                         value={selectedBlock.title}
                         onChange={(e) =>
                           updateBlockWithAutoSave(selectedBlock.id, { title: e.target.value })
                         }
-                        className="flex-1 min-w-[200px] bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none"
+                        className="flex-1 min-w-[220px] bg-slate-50/70 border border-slate-200 rounded-xl px-3.5 py-2 text-sm font-semibold text-slate-800 focus:border-sky-500 focus:bg-white focus:outline-none transition"
                       />
 
                       {!isClientView && (
@@ -983,7 +989,7 @@ export default function App() {
                                 true
                               )
                             }
-                            className="rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-200 focus:border-sky-500 focus:outline-none cursor-pointer"
+                            className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 focus:border-sky-500 focus:outline-none cursor-pointer"
                           >
                             {CATEGORIES.map((c) => (
                               <option key={c.id} value={c.id}>
@@ -994,10 +1000,10 @@ export default function App() {
 
                           <button
                             onClick={handleBlurSelection}
-                            title="Selecione um trecho no texto abaixo e clique aqui para borrar para o cliente"
-                            className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 text-xs font-medium text-amber-300 cursor-pointer"
+                            title="Selecione um trecho no texto e clique para ocultar do cliente"
+                            className="flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 hover:bg-amber-100 px-3.5 py-2 text-xs font-semibold text-amber-800 cursor-pointer transition"
                           >
-                            <Lock className="w-3.5 h-3.5" /> Borrar Seleção
+                            <Lock className="w-3.5 h-3.5 text-amber-600" /> Ocultar Seleção
                           </button>
 
                           <button
@@ -1008,20 +1014,20 @@ export default function App() {
                                 true
                               )
                             }
-                            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium cursor-pointer ${
+                            className={`flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold cursor-pointer transition ${
                               selectedBlock.is_locked_for_client
-                                ? 'border-amber-500/40 bg-amber-500/15 text-amber-300'
-                                : 'border-zinc-700 bg-zinc-900 text-zinc-300'
+                                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                                : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700 shadow-2xs'
                             }`}
                           >
                             {selectedBlock.is_locked_for_client ? (
-                              <Lock className="w-3.5 h-3.5" />
+                              <Lock className="w-3.5 h-3.5 text-amber-600" />
                             ) : (
-                              <Unlock className="w-3.5 h-3.5" />
+                              <Unlock className="w-3.5 h-3.5 text-slate-400" />
                             )}
                             {selectedBlock.is_locked_for_client
-                              ? 'Bloco Oculto p/ Cliente'
-                              : 'Visível p/ Cliente'}
+                              ? 'Oculto para Cliente'
+                              : 'Visível para Cliente'}
                           </button>
                         </>
                       )}
@@ -1029,12 +1035,12 @@ export default function App() {
                       <button
                         onClick={() => persistBlock(selectedBlock.id)}
                         disabled={saveStatus === 'saving'}
-                        className="flex items-center gap-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-zinc-950 px-3 py-1.5 text-xs font-semibold cursor-pointer disabled:opacity-50"
+                        className="flex items-center gap-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 text-xs font-semibold cursor-pointer disabled:opacity-50 transition shadow-xs"
                       >
                         {saveStatus === 'saved' && !dirtyBlockIds.has(selectedBlock.id) ? (
-                          <Check className="w-3.5 h-3.5" />
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
                         ) : null}
-                        {saveStatus === 'saving' ? 'Salvando...' : 'Salvar agora'}
+                        {saveStatus === 'saving' ? 'Salvando...' : 'Salvar Alterações'}
                       </button>
 
                       {!isClientView ? (
@@ -1048,16 +1054,16 @@ export default function App() {
                                   true
                                 )
                               }
-                              title="Restaurar bloco para a IA"
-                              className="flex items-center gap-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 cursor-pointer"
+                              title="Reativar tópico"
+                              className="flex items-center gap-1 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 cursor-pointer transition"
                             >
-                              <RotateCcw className="w-3.5 h-3.5" /> Restaurar
+                              <RotateCcw className="w-3.5 h-3.5 text-emerald-600" /> Reativar
                             </button>
                           )}
                           <button
                             onClick={() => setConfirmDeleteBlock(selectedBlock)}
-                            title="Apagar definitivamente"
-                            className="p-1.5 rounded-lg border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 cursor-pointer"
+                            title="Excluir tópico"
+                            className="p-2 rounded-xl border border-red-200 bg-white hover:bg-red-50 text-red-600 shadow-2xs cursor-pointer transition"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -1072,9 +1078,9 @@ export default function App() {
                             );
                             setClientEditing(false);
                           }}
-                          className="flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-xs font-medium text-rose-300 hover:bg-rose-500/20 cursor-pointer"
+                          className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 cursor-pointer transition"
                         >
-                          <AlertTriangle className="w-3.5 h-3.5" /> Solicitar remoção
+                          <AlertTriangle className="w-3.5 h-3.5" /> Pausar este tópico
                         </button>
                       ) : (
                         <button
@@ -1085,39 +1091,35 @@ export default function App() {
                               true
                             )
                           }
-                          className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 cursor-pointer"
+                          className="flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 cursor-pointer transition"
                         >
-                          <RotateCcw className="w-3.5 h-3.5" /> Cancelar remoção
+                          <RotateCcw className="w-3.5 h-3.5 text-emerald-600" /> Cancelar pausa
                         </button>
                       )}
                     </div>
                   )}
 
-                  {/* Editor Colorido ao Vivo (Admin) ou Visão Protegida do Cliente */}
+                  {/* Editor e Visualizador */}
                   {!isClientView ||
                   (clientEditing && selectedBlock.client_can_edit && !selectedBlock.is_locked_for_client) ? (
-                    <div className="flex flex-col">
-                      <div className="text-xs font-medium text-zinc-400 mb-2 flex items-center justify-between">
+                    <div className="flex flex-col space-y-2">
+                      <div className="text-xs font-semibold text-slate-500 flex items-center justify-between">
                         <span className="flex items-center gap-1.5">
-                          <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+                          <Sparkles className="w-4 h-4 text-sky-600" />
                           {isClientView
-                            ? 'Editando Informações (salvamento automático ativo)'
-                            : 'Editor Colorido ao Vivo (Markdown • salvamento automático)'}
+                            ? 'Editando Informações'
+                            : 'Editor de Conteúdo da IA (Markdown)'}
                         </span>
-                        {isClientView ? (
+                        {isClientView && (
                           <button
                             onClick={async () => {
                               await flushPendingSaves();
                               setClientEditing(false);
                             }}
-                            className="text-xs text-sky-400 hover:underline cursor-pointer"
+                            className="text-xs font-semibold text-sky-600 hover:underline cursor-pointer"
                           >
                             Concluir edição
                           </button>
-                        ) : (
-                          <span className="text-[11px] text-zinc-500">
-                            # Azul • - / 1. Verde • "Falas" Laranja • [[OCULTO]] Borrado p/ cliente
-                          </span>
                         )}
                       </div>
                       <LivePromptEditor
@@ -1143,22 +1145,22 @@ export default function App() {
                       />
                     </div>
                   ) : (
-                    <div>
-                      <div className="text-xs font-medium text-zinc-400 mb-2 flex items-center justify-between">
+                    <div className="space-y-3">
+                      <div className="text-xs font-semibold text-slate-500 flex items-center justify-between">
                         <span className="flex items-center gap-1.5">
-                          <Sparkles className="w-3.5 h-3.5 text-sky-400" />
-                          Visualização do Bloco
+                          <Sparkles className="w-4 h-4 text-sky-600" />
+                          Visualização do Tópico
                         </span>
                         {selectedBlock.client_can_edit && !selectedBlock.is_locked_for_client && (
                           <button
                             onClick={() => setClientEditing(true)}
-                            className="rounded-md bg-sky-500/15 border border-sky-500/30 px-2.5 py-1 text-xs font-medium text-sky-400 hover:bg-sky-500/25 cursor-pointer"
+                            className="rounded-xl bg-slate-900 hover:bg-slate-800 text-white px-3.5 py-1.5 text-xs font-semibold cursor-pointer shadow-xs transition"
                           >
                             Editar informações
                           </button>
                         )}
                       </div>
-                      <div className="rounded-xl border border-zinc-800 bg-[#141417] p-5 min-h-[340px]">
+                      <div className="rounded-3xl border border-slate-200/80 bg-white p-7 min-h-[360px] shadow-xs">
                         <ColoredMarkdown
                           content={selectedBlock.content_md}
                           isClientView={isClientView}
@@ -1169,8 +1171,8 @@ export default function App() {
                   )}
                 </div>
               ) : (
-                <div className="flex-1 flex items-center justify-center text-sm text-zinc-500">
-                  Selecione ou crie um bloco na barra lateral.
+                <div className="flex-1 flex items-center justify-center text-sm font-medium text-slate-400">
+                  Selecione ou crie um tópico na barra lateral.
                 </div>
               )}
             </main>
