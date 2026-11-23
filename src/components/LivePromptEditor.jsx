@@ -13,14 +13,23 @@ export function LivePromptEditor({ value = '', onChange, textareaRef }) {
     }
   };
 
-  const highlightLine = (line, idx) => {
+  const highlightLine = (line, idx, isSecretLine = false) => {
     const trimmed = line.trim();
 
     // Marcadores [[OCULTO]] e [[/OCULTO]]
     if (trimmed === '[[OCULTO]]' || trimmed === '[[/OCULTO]]') {
       return (
-        <div key={idx} className="text-amber-700 font-bold bg-amber-100/80 rounded px-1 -mx-1">
-          {line || ' '}
+        <div key={idx} className="text-amber-800 font-bold bg-amber-200/80 rounded-xs">
+          {line || '\u00A0'}
+        </div>
+      );
+    }
+
+    // Qualquer linha dentro de [[OCULTO]]...[[/OCULTO]] fica destacada em âmbar
+    if (isSecretLine) {
+      return (
+        <div key={idx} className="text-amber-900 font-medium bg-amber-100/70">
+          {line || '\u00A0'}
         </div>
       );
     }
@@ -70,7 +79,7 @@ export function LivePromptEditor({ value = '', onChange, textareaRef }) {
         return <span key={i} className="text-amber-700 font-medium">{part}</span>;
       }
       if (part.startsWith('{{') && part.endsWith('}}')) {
-        return <span key={i} className="text-purple-600 font-semibold bg-purple-50 px-1 rounded">{part}</span>;
+        return <span key={i} className="text-purple-600 font-semibold bg-purple-50 rounded-xs">{part}</span>;
       }
       if (part.startsWith('**') && part.endsWith('**')) {
         return <span key={i} className="text-slate-900 font-bold">{part}</span>;
@@ -79,17 +88,33 @@ export function LivePromptEditor({ value = '', onChange, textareaRef }) {
     });
   };
 
-  const lines = value.split('\n');
+  const lines = (value || '').split('\n');
+  let inSecret = false;
+  const renderedLines = lines.map((line, idx) => {
+    const trimmed = line.trim();
+    if (trimmed.includes('[[OCULTO]]')) {
+      inSecret = true;
+    }
+    const isSecretLine =
+      inSecret ||
+      trimmed.includes('[[OCULTO]]') ||
+      trimmed.includes('[[/OCULTO]]') ||
+      trimmed.startsWith('##!');
+    if (trimmed.includes('[[/OCULTO]]')) {
+      inSecret = false;
+    }
+    return highlightLine(line, idx, isSecretLine);
+  });
 
   return (
-    <div className="relative w-full h-[460px] rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden font-mono text-sm leading-6">
+    <div className="relative w-full h-[500px] rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden font-mono text-sm leading-6">
       {/* Camada de fundo colorida */}
       <pre
         ref={preRef}
         aria-hidden="true"
         className="absolute inset-0 p-4 m-0 overflow-hidden whitespace-pre-wrap break-words pointer-events-none select-none text-slate-800"
       >
-        {lines.map((line, idx) => highlightLine(line, idx))}
+        {renderedLines}
       </pre>
 
       {/* Textarea transparente por cima */}
@@ -99,7 +124,7 @@ export function LivePromptEditor({ value = '', onChange, textareaRef }) {
         onChange={(e) => onChange(e.target.value)}
         onScroll={handleScroll}
         spellCheck={false}
-        className="relative z-10 w-full h-full p-4 m-0 bg-transparent text-transparent caret-sky-600 resize-none focus:outline-none whitespace-pre-wrap break-words selection:bg-sky-100"
+        className="relative z-10 w-full h-full p-4 m-0 bg-transparent text-transparent caret-sky-600 resize-none focus:outline-none whitespace-pre-wrap break-words selection:bg-sky-500/20 selection:text-transparent"
       />
     </div>
   );
